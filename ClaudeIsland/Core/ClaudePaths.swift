@@ -14,6 +14,11 @@ enum ClaudePaths {
     /// Cached resolved directory to avoid filesystem checks on every access
     private static var _cachedDir: URL?
 
+    /// Guards reads/writes to _cachedDir — accessed from the main actor
+    /// (UI settings), the ConversationParser actor, and background watcher
+    /// queues, so cross-thread access needs synchronization.
+    private static let cacheLock = NSLock()
+
     /// Root Claude config directory, resolved once and cached.
     ///
     /// Resolution order:
@@ -22,9 +27,26 @@ enum ClaudePaths {
     /// 3. ~/.config/claude/ (new default since Claude Code v2.1.30+, if projects/ exists)
     /// 4. ~/.claude/ (legacy fallback)
     static var claudeDir: URL {
-        if let cached = _cachedDir { return cached }
+        cacheLock.lock()
+        if let cached = _cachedDir {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        // Resolve outside the lock — involves filesystem and settings reads
+        // that shouldn't block other threads.
         let resolved = resolveClaudeDir()
+
+        cacheLock.lock()
+        // Another thread may have populated the cache while we were resolving;
+        // prefer theirs for consistency, but either value is correct.
+        if let existing = _cachedDir {
+            cacheLock.unlock()
+            return existing
+        }
         _cachedDir = resolved
+        cacheLock.unlock()
         return resolved
     }
 
@@ -50,7 +72,9 @@ enum ClaudePaths {
     /// Invalidate the cached directory so the next access re-resolves.
     /// Call this when the user changes AppSettings.claudeDirectoryName.
     static func invalidateCache() {
+        cacheLock.lock()
         _cachedDir = nil
+        cacheLock.unlock()
     }
 
     private static func resolveClaudeDir() -> URL {
