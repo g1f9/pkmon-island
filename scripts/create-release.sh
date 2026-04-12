@@ -267,29 +267,31 @@ EOF
         echo "Updated src/config.ts with version $VERSION"
     fi
 
-    # Commit and push website changes
+    # Deploy via Cloudflare Pages (manual wrangler deploy — the old GitHub
+    # repo is disabled, so git push is no longer an option).
     cd "$WEBSITE_DIR" || exit 1
-    if [ -d ".git" ]; then
-        git add public/appcast.xml src/config.ts
-        if ! git diff --cached --quiet; then
-            git commit -m "Update appcast for v$VERSION"
-            echo "Committed appcast update"
 
-            read -p "Push website changes to deploy? (Y/n) " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                git push
-                echo "Website deployed!"
-            else
-                echo "Changes committed but not pushed. Run 'git push' in $WEBSITE_DIR to deploy."
-            fi
+    WRANGLER_PROJECT="${CLAUDE_ISLAND_WRANGLER_PROJECT:-claudeisland-website}"
+
+    read -p "Deploy website to Cloudflare Pages ($WRANGLER_PROJECT)? (Y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        if ! command -v wrangler >/dev/null 2>&1; then
+            echo "ERROR: wrangler not found. Install with: npm install -g wrangler"
+            echo "Skipping website deploy. Appcast updated locally at $WEBSITE_PUBLIC/appcast.xml"
         else
-            echo "No changes to commit"
+            echo "Building site..."
+            npm run build
+
+            echo "Deploying to Cloudflare Pages ($WRANGLER_PROJECT)..."
+            wrangler pages deploy dist --project-name="$WRANGLER_PROJECT"
+            echo "Website deployed!"
         fi
     else
-        echo "Copied appcast.xml to $WEBSITE_PUBLIC/"
-        echo "Note: Website directory is not a git repo"
+        echo "Skipped Cloudflare deploy."
+        echo "To deploy manually: cd $WEBSITE_DIR && npm run build && wrangler pages deploy dist --project-name=$WRANGLER_PROJECT"
     fi
+
     cd "$PROJECT_DIR"
 else
     echo "Website directory not found or appcast not generated"
