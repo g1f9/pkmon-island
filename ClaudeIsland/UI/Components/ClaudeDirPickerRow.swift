@@ -11,7 +11,6 @@ import AppKit
 import SwiftUI
 
 struct ClaudeDirPickerRow: View {
-    @ObservedObject var viewModel: NotchViewModel
     @State private var currentValue: String = AppSettings.claudeDirectoryName
     @State private var isHovered: Bool = false
 
@@ -94,36 +93,22 @@ struct ClaudeDirPickerRow: View {
     // MARK: - Actions
 
     private func openFolderPicker() {
-        // The notch window sits at a very high window level and would overlap
-        // the folder picker. Collapse it first, then reopen to the menu when
-        // the picker is dismissed (whether the user chose a folder or canceled).
-        viewModel.notchClose()
+        let panel = NSOpenPanel()
+        panel.title = "Choose Claude Config Directory"
+        panel.message = "Select the folder Claude Code uses (typically ~/.claude or ~/.config/claude)."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.canCreateDirectories = false
+        panel.directoryURL = ClaudePaths.claudeDir
 
-        Task { @MainActor in
-            // Give the close animation a moment to finish so the picker
-            // appears unobstructed.
-            try? await Task.sleep(nanoseconds: 250_000_000)
+        // The notch panel sits at a very high window level (mainMenu + 3).
+        // Lift this picker above it so it doesn't get covered.
+        panel.level = .popUpMenu
 
-            let panel = NSOpenPanel()
-            panel.title = "Choose Claude Config Directory"
-            panel.message = "Select the folder Claude Code uses (typically ~/.claude or ~/.config/claude)."
-            panel.canChooseDirectories = true
-            panel.canChooseFiles = false
-            panel.allowsMultipleSelection = false
-            panel.showsHiddenFiles = true
-            panel.canCreateDirectories = false
-            panel.directoryURL = ClaudePaths.claudeDir
-
-            let response = panel.runModal()
-
-            if response == .OK, let url = panel.url {
-                applyChoice(path: url.path)
-            }
-
-            // Re-expand the notch back to the settings menu so the user
-            // returns to where they were.
-            viewModel.contentType = .menu
-            viewModel.notchOpen(reason: .click)
+        if panel.runModal() == .OK, let url = panel.url {
+            applyChoice(path: url.path)
         }
     }
 
