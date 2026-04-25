@@ -42,3 +42,6 @@ releases/
 # Xcode backup
 *.xcodeproj.backup/
 CLAUDE.md
+
+# Superpowers brainstorming session artifacts
+.superpowers/
