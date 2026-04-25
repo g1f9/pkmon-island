@@ -149,10 +149,30 @@ actor SessionStore {
 
         let newPhase = event.determinePhase()
 
-        if session.phase.canTransition(to: newPhase) {
-            session.phase = newPhase
+        // PreCompact: capture the phase we're leaving so PostCompact can restore
+        // it. Guard against multiple PreCompacts in a row clobbering the saved
+        // phase (only capture on the first transition into compacting).
+        if event.event == "PreCompact", session.phase != .compacting {
+            session.phaseBeforeCompacting = session.phase
+        }
+
+        // PostCompact: prefer restoring the captured pre-compaction phase over
+        // whatever the hook script reported. Auto-compactions between turns
+        // would otherwise wedge the UI in processing forever (no Stop hook
+        // follows a between-turn compaction). Falls back to determinePhase()
+        // when nothing was captured.
+        let effectivePhase: SessionPhase
+        if event.event == "PostCompact", let saved = session.phaseBeforeCompacting {
+            effectivePhase = saved
+            session.phaseBeforeCompacting = nil
         } else {
-            Self.logger.debug("Invalid transition: \(String(describing: session.phase), privacy: .public) -> \(String(describing: newPhase), privacy: .public), ignoring")
+            effectivePhase = newPhase
+        }
+
+        if session.phase.canTransition(to: effectivePhase) {
+            session.phase = effectivePhase
+        } else {
+            Self.logger.debug("Invalid transition: \(String(describing: session.phase), privacy: .public) -> \(String(describing: effectivePhase), privacy: .public), ignoring")
         }
 
         if event.event == "PermissionRequest", let toolUseId = event.toolUseId {

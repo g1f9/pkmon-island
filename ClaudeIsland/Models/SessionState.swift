@@ -28,6 +28,11 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// Current phase in the session lifecycle
     var phase: SessionPhase
 
+    /// Phase captured on PreCompact so PostCompact can restore it. Compaction
+    /// is a transient background operation — without this we'd have to guess
+    /// the next phase, which gets it wrong for between-turn auto-compactions.
+    var phaseBeforeCompacting: SessionPhase?
+
     // MARK: - Chat History
 
     /// All chat items for this session (replaces ChatHistoryManager.histories)
@@ -81,7 +86,8 @@ struct SessionState: Equatable, Identifiable, Sendable {
         ),
         needsClearReconciliation: Bool = false,
         lastActivity: Date = Date(),
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        phaseBeforeCompacting: SessionPhase? = nil
     ) {
         self.sessionId = sessionId
         self.cwd = cwd
@@ -97,6 +103,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.needsClearReconciliation = needsClearReconciliation
         self.lastActivity = lastActivity
         self.createdAt = createdAt
+        self.phaseBeforeCompacting = phaseBeforeCompacting
     }
 
     // MARK: - Derived Properties

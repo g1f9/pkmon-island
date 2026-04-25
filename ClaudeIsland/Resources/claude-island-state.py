@@ -219,8 +219,12 @@ def main():
         state["status"] = "compacting"
 
     elif event == "PostCompact":
-        # Compaction finished — return to processing so UI exits .compacting phase
-        state["status"] = "processing"
+        # Compaction finished. Default to waiting_for_input so a between-turn
+        # auto-compact correctly drops back to ready instead of getting stuck
+        # in processing (no Stop hook follows a between-turn compaction). For
+        # mid-turn compactions the next PreToolUse fires within ms and pulls
+        # the UI back to processing — brief flicker, but no permanent stuck.
+        state["status"] = "waiting_for_input"
 
     else:
         state["status"] = "unknown"

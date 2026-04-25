@@ -138,6 +138,8 @@ enum SessionPhase: Sendable {
             return true
         case (.compacting, .waitingForInput):
             return true
+        case (.compacting, .waitingForApproval):
+            return true  // PostCompact may restore a pre-compaction approval state
 
         // Allow staying in same state (no-op transitions)
         default:
