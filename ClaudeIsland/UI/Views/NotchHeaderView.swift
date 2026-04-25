@@ -71,17 +71,21 @@ struct ClaudeCrabIcon: View {
             }.applying(CGAffineTransform(scaleX: scale, y: scale).translatedBy(x: xOffset / scale, y: 0))
             context.fill(body, with: .color(color))
 
-            // Left eye
+            // Eyes — punched out as transparent holes via destinationOut so
+            // template-rendered (menu bar) versions show the menu bar bg
+            // through them. On the black notch this looks identical to the
+            // previous solid-black eyes.
+            context.blendMode = .destinationOut
+
             let leftEye = Path { p in
                 p.addRect(CGRect(x: 12, y: 13, width: 6, height: 6.5))
             }.applying(CGAffineTransform(scaleX: scale, y: scale).translatedBy(x: xOffset / scale, y: 0))
-            context.fill(leftEye, with: .color(.black))
+            context.fill(leftEye, with: .color(.white))
 
-            // Right eye
             let rightEye = Path { p in
                 p.addRect(CGRect(x: 48, y: 13, width: 6, height: 6.5))
             }.applying(CGAffineTransform(scaleX: scale, y: scale).translatedBy(x: xOffset / scale, y: 0))
-            context.fill(rightEye, with: .color(.black))
+            context.fill(rightEye, with: .color(.white))
         }
         .frame(width: size * (66.0 / 52.0), height: size)
         .onReceive(legTimer) { _ in

@@ -8,6 +8,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowManager: WindowManager?
     private var screenObserver: ScreenObserver?
     private var updateCheckTimer: Timer?
+    private var statusBarController: StatusBarController?
+    private var coreSessionMonitor: ClaudeSessionMonitor?
+    private var displayModeObserver: NSObjectProtocol?
 
     static var shared: AppDelegate?
     let updater: SPUUpdater
@@ -70,8 +73,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         HookInstaller.installIfNeeded()
         NSApplication.shared.setActivationPolicy(.accessory)
 
+        // Start hook socket + periodic status check up-front so both display
+        // modes see live session state. ClaudeSessionMonitor is a thin wrapper
+        // around the SessionStore singleton and HookSocketServer.start() is
+        // idempotent, so NotchView's own .startMonitoring() is a safe no-op.
+        coreSessionMonitor = ClaudeSessionMonitor()
+        coreSessionMonitor?.startMonitoring()
+
         windowManager = WindowManager()
-        _ = windowManager?.setupNotchWindow()
+        applyDisplayMode(AppSettings.displayMode)
+
+        displayModeObserver = NotificationCenter.default.addObserver(
+            forName: .displayModeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.applyDisplayMode(AppSettings.displayMode)
+        }
 
         screenObserver = ScreenObserver { [weak self] in
             self?.handleScreenChange()
@@ -88,13 +107,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleScreenChange() {
+        guard AppSettings.displayMode == .notch else { return }
         _ = windowManager?.setupNotchWindow()
+    }
+
+    @MainActor
+    private func applyDisplayMode(_ mode: DisplayMode) {
+        switch mode {
+        case .notch:
+            statusBarController?.tearDown()
+            statusBarController = nil
+            _ = windowManager?.setupNotchWindow()
+        case .statusBar:
+            windowManager?.teardown()
+            if statusBarController == nil, let monitor = coreSessionMonitor {
+                statusBarController = StatusBarController(sessionMonitor: monitor)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         Mixpanel.mainInstance().flush()
         updateCheckTimer?.invalidate()
         screenObserver = nil
+        if let observer = displayModeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            displayModeObserver = nil
+        }
+        statusBarController?.tearDown()
+        statusBarController = nil
     }
 
     private func getOrCreateDistinctId() -> String {

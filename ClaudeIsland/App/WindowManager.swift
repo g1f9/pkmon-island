@@ -16,6 +16,14 @@ class WindowManager {
     private var isInitialLaunch = true
     private var currentScreenFrame: NSRect?
 
+    /// Tear down the notch window (used when switching to status-bar mode).
+    func teardown() {
+        windowController?.window?.orderOut(nil)
+        windowController?.window?.close()
+        windowController = nil
+        currentScreenFrame = nil
+    }
+
     /// Set up or recreate the notch window
     func setupNotchWindow() -> NotchWindowController? {
         // Use ScreenSelector for screen selection

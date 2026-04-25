@@ -31,6 +31,16 @@ enum NotificationSound: String, CaseIterable {
     }
 }
 
+/// Where the app surfaces its UI.
+enum DisplayMode: String, CaseIterable {
+    case notch       // Floating overlay at the top of the chosen screen
+    case statusBar   // macOS menu-bar status item with a pending-approval badge
+}
+
+extension Notification.Name {
+    static let displayModeDidChange = Notification.Name("ClaudeIsland.displayModeDidChange")
+}
+
 enum AppSettings {
     private static let defaults = UserDefaults.standard
 
@@ -39,6 +49,23 @@ enum AppSettings {
     private enum Keys {
         static let notificationSound = "notificationSound"
         static let claudeDirectoryName = "claudeDirectoryName"
+        static let displayMode = "displayMode"
+    }
+
+    // MARK: - Display Mode
+
+    static var displayMode: DisplayMode {
+        get {
+            guard let raw = defaults.string(forKey: Keys.displayMode),
+                  let mode = DisplayMode(rawValue: raw) else {
+                return .notch
+            }
+            return mode
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Keys.displayMode)
+            NotificationCenter.default.post(name: .displayModeDidChange, object: nil)
+        }
     }
 
     // MARK: - Notification Sound

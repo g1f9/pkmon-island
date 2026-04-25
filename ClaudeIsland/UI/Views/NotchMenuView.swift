@@ -20,6 +20,7 @@ struct NotchMenuView: View {
     @ObservedObject private var soundSelector = SoundSelector.shared
     @State private var hooksInstalled: Bool = false
     @State private var launchAtLogin: Bool = false
+    @State private var displayMode: DisplayMode = .notch
 
     var body: some View {
         // ScrollView so the menu gracefully scrolls when content exceeds the
@@ -64,6 +65,14 @@ struct NotchMenuView: View {
                     } catch {
                         print("Failed to toggle launch at login: \(error)")
                     }
+                }
+
+                let inStatusBar = displayMode == .statusBar
+                MenuRow(
+                    icon: inStatusBar ? "rectangle.topthird.inset.filled" : "menubar.dock.rectangle",
+                    label: inStatusBar ? "Show in Island" : "Show in Menu Bar"
+                ) {
+                    AppSettings.displayMode = inStatusBar ? .notch : .statusBar
                 }
 
                 MenuToggleRow(
@@ -127,6 +136,7 @@ struct NotchMenuView: View {
     private func refreshStates() {
         hooksInstalled = HookInstaller.isInstalled()
         launchAtLogin = SMAppService.mainApp.status == .enabled
+        displayMode = AppSettings.displayMode
         screenSelector.refreshScreens()
     }
 }
