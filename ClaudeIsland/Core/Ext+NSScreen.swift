@@ -11,8 +11,10 @@ extension NSScreen {
     /// Returns the size of the notch on this screen (pixel-perfect using macOS APIs)
     var notchSize: CGSize {
         guard safeAreaInsets.top > 0 else {
-            // Fallback for non-notch displays (matches typical MacBook notch)
-            return CGSize(width: 224, height: 38)
+            // Non-notch displays: match the system menu bar height so the
+            // pill sits flush with the top toolbar instead of overhanging it.
+            let menuBarHeight = NSStatusBar.system.thickness
+            return CGSize(width: 224, height: menuBarHeight)
         }
 
         let notchHeight = safeAreaInsets.top
