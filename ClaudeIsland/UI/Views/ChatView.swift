@@ -26,6 +26,7 @@ struct ChatView: View {
     @State private var isBottomVisible: Bool = true
     @State private var resolvedInjector: (any MessageInjector)?
     @State private var lastInjectFailed: Bool = false
+    @State private var resolveTask: Task<Void, Never>?
     @FocusState private var isInputFocused: Bool
 
     init(sessionId: String, initialSession: SessionState, sessionMonitor: ClaudeSessionMonitor, viewModel: NotchViewModel) {
@@ -94,7 +95,7 @@ struct ChatView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isWaitingForApproval)
         .animation(nil, value: viewModel.status)
         .task {
-            resolvedInjector = await MessageInjectorRegistry.shared.resolve(for: session)
+            scheduleResolve(for: session)
             // Skip if already loaded (prevents redundant work on view recreation)
             guard !hasLoadedOnce else { return }
             hasLoadedOnce = true
@@ -164,13 +165,11 @@ struct ChatView: View {
         }
         .onReceive(sessionMonitor.$instances) { sessions in
             if let updated = sessions.first(where: { $0.sessionId == sessionId }) {
-                Task {
-                    resolvedInjector = await MessageInjectorRegistry.shared.resolve(for: updated)
-                }
+                scheduleResolve(for: updated)
             }
         }
         .onChange(of: canSendMessages) { _, canSend in
-            // Auto-focus input when tmux messaging becomes available
+            // Auto-focus input when messaging becomes available
             if canSend && !isInputFocused {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     isInputFocused = true
@@ -485,6 +484,18 @@ struct ChatView: View {
         // Don't add to history here - it will be synced from JSONL when UserPromptSubmit event fires
         Task {
             await sendToSession(text)
+        }
+    }
+
+    /// Resolve the injector for `session` in a cancellable task.
+    /// Cancels any in-flight resolve so a slow earlier call cannot
+    /// overwrite a fresher one.
+    private func scheduleResolve(for session: SessionState) {
+        resolveTask?.cancel()
+        resolveTask = Task {
+            let injector = await MessageInjectorRegistry.shared.resolve(for: session)
+            if Task.isCancelled { return }
+            resolvedInjector = injector
         }
     }
 
