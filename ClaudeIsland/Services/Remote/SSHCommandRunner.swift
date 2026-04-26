@@ -85,9 +85,10 @@ enum SSHCommandRunner {
         return try await runProcess(executable: "/usr/bin/scp", args: args, timeout: timeout)
     }
 
-    /// Generic: caller supplies all args (used for `ssh -N -R` long-running
-    /// tunnel; that path doesn't go through this helper because we need to
-    /// keep the Process handle for cancellation).
+    /// Private bridge from Process to async/await. Used only by `run` and
+    /// `scpUpload` — the long-running `ssh -N -R` tunnel in `SSHBridge` does
+    /// NOT go through here because it needs to keep the Process handle for
+    /// its own cancellation lifecycle.
     private static func runProcess(
         executable: String,
         args: [String],
@@ -114,11 +115,15 @@ enum SSHCommandRunner {
         // would resume(returning:), trapping the checked continuation.
         let resumeGate = ResumeGate()
 
+        // Hoist the timer out of the continuation closure so `onCancel` can
+        // also cancel it. Without this the timer leaks until `timeout`
+        // seconds after a Task cancellation if the terminate→exit race ends
+        // with the process exiting before we observed isRunning.
+        let timer = DispatchSource.makeTimerSource(queue: .global())
+        timer.schedule(deadline: DispatchTime.now() + timeout)
+
         return try await withTaskCancellationHandler {
             return try await withCheckedThrowingContinuation { continuation in
-                let deadline = DispatchTime.now() + timeout
-                let timer = DispatchSource.makeTimerSource(queue: .global())
-                timer.schedule(deadline: deadline)
                 timer.setEventHandler {
                     if process.isRunning {
                         process.terminate()
@@ -131,6 +136,9 @@ enum SSHCommandRunner {
 
                 process.terminationHandler = { proc in
                     timer.cancel()
+                    // readToEnd() returns Data?; try? wraps it in another Optional.
+                    // flatMap collapses both layers down to Data?, then ?? defaults
+                    // to an empty Data on either nil source.
                     let stdoutData = (try? stdoutPipe.fileHandleForReading.readToEnd()).flatMap { $0 } ?? Data()
                     let stderrData = (try? stderrPipe.fileHandleForReading.readToEnd()).flatMap { $0 } ?? Data()
                     let result = Result(
@@ -144,6 +152,7 @@ enum SSHCommandRunner {
                 }
             }
         } onCancel: {
+            timer.cancel()
             if process.isRunning {
                 process.terminate()
             }
