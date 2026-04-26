@@ -60,6 +60,29 @@ that are easy to break and not obvious from a single file.
   still use `send-keys -l "1"|"2"|"n"`. The approval prompt is a modal
   expecting a single character, not a paste — leaving those alone.
 
+### Ghostty submit needs TWO `send key "enter"` calls — don't trim to one
+
+`GhosttyInjector.inject` paste-then-Enter-twice with 50ms gaps. A
+single synthetic Enter after `input text` only stages the message in
+Claude's input field; we observed empirically that the first Enter
+gets eaten during Ghostty/Ink's bracketed-paste finalization. Two
+Enters submit reliably on the same inject call.
+
+Two alternatives we tried and rejected:
+- `keybind = enter=text:\r` in the user's Ghostty config: makes a
+  single send-key Enter submit, but intercepts ALL Enter keys before
+  macOS IME runs — breaks Pinyin / Chinese composition in any Ghostty
+  terminal. Ghostty Discussion #9264.
+- `tell application "Ghostty" to activate` + `tell System Events to
+  key code 36`: works, but yanks Ghostty to the foreground and
+  dismisses the Vibe Notch panel.
+
+The double-Enter trick keeps IME intact and doesn't steal focus.
+
+Also note: `Info.plist` declares `NSAppleEventsUsageDescription` so
+macOS actually shows the Automation permission prompt on first
+inject; without that key the request is silently denied.
+
 ## JSONL parsing invariants
 
 - `~/.claude/projects/{cwd}/*.jsonl` is parsed incrementally; `lastSyncOffset`
