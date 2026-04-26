@@ -95,6 +95,12 @@ struct NotchMenuView: View {
                     .background(Color.white.opacity(0.08))
                     .padding(.vertical, 4)
 
+                RemoteHostsSection()
+
+                Divider()
+                    .background(Color.white.opacity(0.08))
+                    .padding(.vertical, 4)
+
                 // About
                 UpdateRow(updateManager: updateManager)
 
