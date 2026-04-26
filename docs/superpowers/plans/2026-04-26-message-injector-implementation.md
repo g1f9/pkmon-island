@@ -9,7 +9,7 @@
 **Tech Stack:** Swift 5+ / SwiftUI / actors / `os.log` / `NSAppleScript` / `NSWorkspace` / `ProcessExecutor` (existing async wrapper around `Process`).
 
 **Notes for the implementer:**
-- This codebase has **no test target** — `xcodebuild test` finds nothing. The verification step in every task is `xcodebuild -scheme ClaudeIsland -configuration Release build`. Real correctness is established by the manual smoke checklist in Task 9 (G1–G6, T1–T4).
+- This codebase has **no test target** — `xcodebuild test` finds nothing. The verification step in every task is `xcodebuild -scheme ClaudeIsland -configuration Debug build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO` (Release requires a Mac Development cert that may not exist on every dev machine; Debug with signing disabled is the canonical local-build command). Real correctness is established by the manual smoke checklist in Task 9 (G1–G6, T1–T4).
 - The Xcode project uses `PBXFileSystemSynchronizedRootGroup`. New files dropped into `ClaudeIsland/` are auto-detected — **do NOT touch `project.pbxproj`**.
 - Spec lives at `docs/superpowers/specs/2026-04-26-message-injector-design.md`. Re-read sections of it if a task feels under-specified.
 
@@ -105,7 +105,7 @@ struct TmuxInjector: MessageInjector {
 Run:
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release -quiet build 2>&1 | tail -20
+xcodebuild -scheme ClaudeIsland -configuration Debug -quiet build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO 2>&1 | grep -E "(BUILD SUCCEEDED|BUILD FAILED|error:)" | head -5
 ```
 
 Expected: `** BUILD SUCCEEDED **` at the end. If failure mentions `GhosttyInjector` or `TmuxInjector`, re-check Step 2.
@@ -189,7 +189,7 @@ enum AppleScriptRunner {
 - [ ] **Step 2: Build**
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release -quiet build 2>&1 | tail -10
+xcodebuild -scheme ClaudeIsland -configuration Debug -quiet build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO 2>&1 | grep -E "(BUILD SUCCEEDED|BUILD FAILED|error:)" | head -5
 ```
 
 Expected: `** BUILD SUCCEEDED **`.
@@ -343,7 +343,7 @@ Leave the `TmuxInjector` stub in place — Task 4 replaces it.
 - [ ] **Step 3: Build**
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release -quiet build 2>&1 | tail -10
+xcodebuild -scheme ClaudeIsland -configuration Debug -quiet build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO 2>&1 | grep -E "(BUILD SUCCEEDED|BUILD FAILED|error:)" | head -5
 ```
 
 Expected: `** BUILD SUCCEEDED **`. Duplicate-symbol errors here mean the stub wasn't removed in Step 2.
@@ -513,7 +513,7 @@ struct TmuxInjector: MessageInjector {
 - [ ] **Step 3: Build**
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release -quiet build 2>&1 | tail -10
+xcodebuild -scheme ClaudeIsland -configuration Debug -quiet build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO 2>&1 | grep -E "(BUILD SUCCEEDED|BUILD FAILED|error:)" | head -5
 ```
 
 Expected: `** BUILD SUCCEEDED **`.
@@ -638,7 +638,7 @@ Find at `ChatView.swift:490-518`. Delete the entire `private func findTmuxTarget
 - [ ] **Step 6: Build**
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release -quiet build 2>&1 | tail -20
+xcodebuild -scheme ClaudeIsland -configuration Debug -quiet build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO 2>&1 | grep -E "(BUILD SUCCEEDED|BUILD FAILED|error:)" | head -5
 ```
 
 Expected: `** BUILD SUCCEEDED **`. If you see "cannot find type 'TmuxTarget'" — that means an import was lost; `TmuxTarget` lives in `Services/Tmux/TmuxTarget.swift` (or similar) and may already be visible via Swift's module-internal linkage. Confirm by re-running.
@@ -771,7 +771,7 @@ private var inputBar: some View {
 - [ ] **Step 3: Build**
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release -quiet build 2>&1 | tail -10
+xcodebuild -scheme ClaudeIsland -configuration Debug -quiet build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO 2>&1 | grep -E "(BUILD SUCCEEDED|BUILD FAILED|error:)" | head -5
 ```
 
 Expected: `** BUILD SUCCEEDED **`.
@@ -828,7 +828,7 @@ Expected: no output. If any callers remain, route them to `MessageInjectorRegist
 - [ ] **Step 4: Build**
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release -quiet build 2>&1 | tail -10
+xcodebuild -scheme ClaudeIsland -configuration Debug -quiet build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO 2>&1 | grep -E "(BUILD SUCCEEDED|BUILD FAILED|error:)" | head -5
 ```
 
 Expected: `** BUILD SUCCEEDED **`.
@@ -891,14 +891,14 @@ This codebase has no test target — correctness is established here. Run throug
 - [ ] **Build a Release binary and launch it**
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release -quiet build
+xcodebuild -scheme ClaudeIsland -configuration Debug build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 open /path/to/built/ClaudeIsland.app
 ```
 
 Find the binary path with:
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release -showBuildSettings 2>/dev/null | grep -E 'BUILT_PRODUCTS_DIR|FULL_PRODUCT_NAME'
+xcodebuild -scheme ClaudeIsland -configuration Debug -showBuildSettings 2>/dev/null | grep -E 'BUILT_PRODUCTS_DIR|FULL_PRODUCT_NAME'
 ```
 
 - [ ] **G1 — Ghostty + plain text**: Open Ghostty, run `claude` in your project dir. From the chat panel, send `hello`. Claude turns up `hello` as a user message.
