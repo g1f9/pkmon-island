@@ -60,10 +60,18 @@ struct GhosttyInjector: MessageInjector {
         let escapedText = AppleScriptRunner.escape(text)
         let escapedCwd = AppleScriptRunner.escape(normalized)
 
-        // 1. Paste the text via bracketed paste (same path as Cmd+V — `/`,
-        //    `!`, `#`, embedded newlines are all inert).
-        // 2. Send a separate `enter` key event to actually submit. Without
-        //    step 2 the text just sits in Claude's input buffer.
+        // 1. Paste the text via bracketed paste (Cmd+V code path — `/`,
+        //    `!`, `#`, embedded newlines all stay literal).
+        // 2. Fire `send key "enter"` TWICE with a small delay between.
+        //    Empirically: a single synthetic Enter only stages the text
+        //    in Claude/Ink's input field — the first one gets swallowed
+        //    during bracketed-paste finalization. Two Enters submit
+        //    reliably on the same call.
+        // We pick this over the alternatives because it's the only path
+        // that doesn't break IME (the `keybind = enter=text:\\r` route
+        // intercepts Enter before macOS IME runs — Ghostty Discussion
+        // #9264) and doesn't steal window focus (System Events + activate
+        // pulls Ghostty to the front and dismisses the panel).
         let script = """
         tell application id "\(ghosttyBundleId)"
             set targets to every terminal whose working directory is equal to "\(escapedCwd)"
@@ -72,6 +80,9 @@ struct GhosttyInjector: MessageInjector {
             end if
             set t to item 1 of targets
             input text "\(escapedText)" to t
+            delay 0.05
+            send key "enter" to t
+            delay 0.05
             send key "enter" to t
             return true
         end tell
