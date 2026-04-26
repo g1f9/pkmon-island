@@ -93,6 +93,19 @@ actor SSHBridge {
         let socketPath = "/tmp/claude-island.sock"
         let macSocketPath = "/tmp/claude-island-\(host.name).sock"
 
+        // Pre-clean the remote socket. StreamLocalBindUnlink=yes is set
+        // below and *should* let sshd unlink stale sockets on bind, but
+        // empirically (see docs/superpowers/spike-results-2026-04-26.md)
+        // it doesn't work on every sshd version. Without this, a single
+        // dirty-killed prior tunnel leaves a stale socket that wedges all
+        // subsequent reconnect attempts with `remote port forwarding
+        // failed`. Best-effort: silently ignore the result.
+        _ = try? await SSHCommandRunner.run(
+            target: host.sshTarget,
+            remoteCommand: "rm -f \(socketPath)",
+            timeout: 5
+        )
+
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         proc.arguments = SSHCommandRunner.baseSSHArgs + [
