@@ -67,7 +67,23 @@ final class StatusBarController: NSObject {
             )
         )
         popover.contentViewController = host
-        popover.contentSize = NSSize(width: 360, height: 460)
+        popover.contentSize = viewModel.openedSize
+
+        // Mirror island mode: openedSize switches with contentType
+        // (instances / chat / menu) and grows when settings pickers
+        // expand. NSPopover.contentSize isn't reactive, so push it
+        // whenever the view model publishes a change. SwiftUI inside
+        // the popover already reads openedSize for its own .frame().
+        viewModel.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                let next = self.viewModel.openedSize
+                if self.popover.contentSize != next {
+                    self.popover.contentSize = next
+                }
+            }
+            .store(in: &cancellables)
     }
 
     private func configureButton() {

@@ -29,7 +29,7 @@ struct StatusBarPopoverView: View {
             Divider().background(Color.white.opacity(0.08))
             footer
         }
-        .frame(width: 360, height: 460)
+        .frame(width: viewModel.openedSize.width, height: viewModel.openedSize.height)
         .background(Color.black)
         .preferredColorScheme(.dark)
     }

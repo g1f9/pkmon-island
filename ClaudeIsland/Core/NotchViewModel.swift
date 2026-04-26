@@ -62,31 +62,36 @@ class NotchViewModel: ObservableObject {
     var screenRect: CGRect { geometry.screenRect }
     var windowHeight: CGFloat { geometry.windowHeight }
 
-    /// Dynamic opened size based on content type
+    /// Dynamic opened size based on content type.
+    /// Status-bar popover mode constructs the view model with a zero
+    /// screenRect (no notch geometry), so we fall back to the main screen's
+    /// width to keep the same caps active. Both presentations end up with
+    /// identical sizes on a typical display.
     var openedSize: CGSize {
+        let referenceWidth = screenRect.width > 0
+            ? screenRect.width
+            : (NSScreen.main?.frame.width ?? 1440)
+        // Width is unified across all content types so transitions
+        // (instances → chat, chat → menu) only animate height — no
+        // horizontal shimmy. Chat needs the most room, so the chat
+        // cap (50% of screen, capped at 600pt) wins for everyone.
+        let width = min(referenceWidth * 0.5, 600)
         switch contentType {
         case .chat:
-            // Large size for chat view
-            return CGSize(
-                width: min(screenRect.width * 0.5, 600),
-                height: 580
-            )
+            return CGSize(width: width, height: 580)
         case .menu:
             // Base height covers all static rows (Back, 3 picker rows, 3 toggles,
             // Accessibility, Update, GitHub, Quit + 4 dividers + padding).
             // Picker expansion deltas added on top when expanded.
             return CGSize(
-                width: min(screenRect.width * 0.4, 480),
+                width: width,
                 height: 540
                     + screenSelector.expandedPickerHeight
                     + soundSelector.expandedPickerHeight
                     + claudeDirSelector.expandedPickerHeight
             )
         case .instances:
-            return CGSize(
-                width: min(screenRect.width * 0.4, 480),
-                height: 320
-            )
+            return CGSize(width: width, height: 320)
         }
     }
 
