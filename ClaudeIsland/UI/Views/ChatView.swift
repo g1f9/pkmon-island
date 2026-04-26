@@ -368,36 +368,73 @@ struct ChatView: View {
     }
 
     private var inputBar: some View {
-        HStack(spacing: 10) {
-            TextField(canSendMessages ? "Message Claude..." : "Open Claude Code in tmux to enable messaging", text: $inputText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
-                .focused($isInputFocused)
-                .disabled(!canSendMessages)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+        VStack(spacing: 6) {
+            if lastInjectFailed {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                    Text("Send failed. If using Ghostty, grant Automation permission in System Settings → Privacy & Security → Automation.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.7))
+                        .lineLimit(2)
+                    Spacer()
+                    Button {
+                        lastInjectFailed = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.white.opacity(canSendMessages ? 0.08 : 0.04))
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.orange.opacity(0.12))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 20)
-                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.orange.opacity(0.3), lineWidth: 1)
                         )
                 )
-                .onSubmit {
-                    sendMessage()
-                }
-
-            Button {
-                sendMessage()
-            } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 28))
-                    .foregroundColor(!canSendMessages || inputText.isEmpty ? .white.opacity(0.2) : .white.opacity(0.9))
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .buttonStyle(.plain)
-            .disabled(!canSendMessages || inputText.isEmpty)
+
+            HStack(spacing: 10) {
+                TextField(canSendMessages
+                            ? "Message Claude..."
+                            : "Open Claude Code in Ghostty or tmux to enable messaging",
+                          text: $inputText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
+                    .focused($isInputFocused)
+                    .disabled(!canSendMessages)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(Color.white.opacity(canSendMessages ? 0.08 : 0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 20)
+                                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                            )
+                    )
+                    .onSubmit {
+                        sendMessage()
+                    }
+
+                Button {
+                    sendMessage()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(!canSendMessages || inputText.isEmpty ? .white.opacity(0.2) : .white.opacity(0.9))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSendMessages || inputText.isEmpty)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -409,10 +446,11 @@ struct ChatView: View {
                 endPoint: .bottom
             )
             .frame(height: 24)
-            .offset(y: -24) // Push above input bar
+            .offset(y: -24)
             .allowsHitTesting(false)
         }
-        .zIndex(1) // Render above message list
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: lastInjectFailed)
+        .zIndex(1)
     }
 
     // MARK: - Approval Bar
