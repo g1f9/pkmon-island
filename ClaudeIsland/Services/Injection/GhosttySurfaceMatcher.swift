@@ -76,6 +76,10 @@ enum GhosttySurfaceMatcher {
 
     // MARK: - Process tree probe
 
+    // BLOCKED: runs on MainActor and the call below is synchronous —
+    // each invocation blocks ~1ms × N-Ghostty-surfaces. Acceptable for
+    // a typical 1-3 surface user, but if the count grows or ps gets
+    // slow under load, move this off the main actor.
     private static func hasSSHChild(tty: String, target: String, alias: String) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -86,15 +90,20 @@ enum GhosttySurfaceMatcher {
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             return false
         }
 
+        // Drain the pipe BEFORE waitUntilExit. If we wait first and the
+        // child writes more than the pipe buffer (~64KB on Darwin), the
+        // child blocks on write while we block on exit — classic deadlock.
+        // Our `ps -t -o command=` output is typically ~hundreds of bytes,
+        // but the correctness pattern matters anyway.
         // readToEnd() returns Data?; try? wraps it in another Optional.
         // flatMap collapses both layers down to Data?, then ?? defaults
         // to an empty Data on either nil source.
         let data = (try? pipe.fileHandleForReading.readToEnd()).flatMap { $0 } ?? Data()
+        process.waitUntilExit()
         let out = String(data: data, encoding: .utf8) ?? ""
 
         for line in out.split(separator: "\n") {
@@ -104,6 +113,12 @@ enum GhosttySurfaceMatcher {
             // "ssh"), or contains "/ssh " (e.g. /usr/bin/ssh ...).
             let isSSH = s.hasPrefix("ssh ") || s.contains(" ssh ") || s.contains("/ssh ")
             guard isSSH else { continue }
+            // Substring match. A short or path-like alias (e.g. "dev")
+            // can produce false positives if it happens to appear
+            // elsewhere in the SSH command line, but the isSSH guard
+            // above ensures we're only looking at lines that are
+            // already recognized SSH invocations, so the blast radius
+            // is bounded.
             if s.contains(target) || s.contains(alias) {
                 return true
             }
