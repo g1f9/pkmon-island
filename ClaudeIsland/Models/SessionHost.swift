@@ -7,9 +7,6 @@
 //  user-visible alias (RemoteHost.name), not the SSH target — the alias is
 //  stable across user edits to ~/.ssh/config.
 //
-
-import Foundation
-
 enum SessionHost: Hashable, Sendable, Codable {
     case local
     case remote(name: String)
