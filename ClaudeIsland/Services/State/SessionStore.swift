@@ -57,8 +57,8 @@ actor SessionStore {
         Self.logger.debug("Processing: \(String(describing: event), privacy: .public)")
 
         switch event {
-        case .hookReceived(let hookEvent):
-            await processHookEvent(hookEvent)
+        case .hookReceived(let hookEvent, let host):
+            await processHookEvent(hookEvent, host: host)
 
         case .permissionApproved(let sessionId, let toolUseId):
             await processPermissionApproved(sessionId: sessionId, toolUseId: toolUseId)
@@ -121,10 +121,10 @@ actor SessionStore {
 
     // MARK: - Hook Event Processing
 
-    private func processHookEvent(_ event: HookEvent) async {
+    private func processHookEvent(_ event: HookEvent, host: SessionHost) async {
         let sessionId = event.sessionId
         let isNewSession = sessions[sessionId] == nil
-        var session = sessions[sessionId] ?? createSession(from: event)
+        var session = sessions[sessionId] ?? createSession(from: event, host: host)
 
         // Track new session in Mixpanel
         if isNewSession {
@@ -132,7 +132,7 @@ actor SessionStore {
         }
 
         session.pid = event.pid
-        if let pid = event.pid {
+        if session.host == .local, let pid = event.pid {
             let tree = ProcessTreeBuilder.shared.buildTree()
             session.isInTmux = ProcessTreeBuilder.shared.isInTmux(pid: pid, tree: tree)
         }
@@ -204,14 +204,15 @@ actor SessionStore {
         }
     }
 
-    private func createSession(from event: HookEvent) -> SessionState {
+    private func createSession(from event: HookEvent, host: SessionHost) -> SessionState {
         SessionState(
             sessionId: event.sessionId,
             cwd: event.cwd,
             projectName: URL(fileURLWithPath: event.cwd).lastPathComponent,
             pid: event.pid,
             tty: event.tty?.replacingOccurrences(of: "/dev/", with: ""),
-            isInTmux: false,  // Will be updated
+            isInTmux: false,  // Will be updated for local; stays false for remote
+            host: host,
             phase: .idle
         )
     }

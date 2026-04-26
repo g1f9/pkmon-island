@@ -15,6 +15,30 @@ class ClaudeSessionMonitor: ObservableObject {
     @Published var instances: [SessionState] = []
     @Published var pendingInstances: [SessionState] = []
 
+    /// One HookSocketServer per host. Local lives at `.local`; remote
+    /// hosts live at `.remote(name:)`.
+    private var servers: [SessionHost: HookSocketServer] = [:]
+
+    /// Local hook socket path — exactly the path Claude Code's hook
+    /// script writes to on this Mac.
+    static let localSocketPath = "/tmp/claude-island.sock"
+
+    /// Per-remote-host socket path on the Mac side. The SSH bridge's
+    /// `-R remote:local` forwards to this path.
+    static func remoteSocketPath(for hostName: String) -> String {
+        "/tmp/claude-island-\(hostName).sock"
+    }
+
+    /// All currently-known remote host aliases (the `name` of every
+    /// .remote(name:) server in `servers`). Used by SSHBridgeController
+    /// (Task 9) to reconcile servers when the registry changes.
+    var knownRemoteHostNames: [String] {
+        servers.keys.compactMap {
+            if case .remote(let name) = $0 { return name }
+            return nil
+        }
+    }
+
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -31,15 +55,25 @@ class ClaudeSessionMonitor: ObservableObject {
     // MARK: - Monitoring Lifecycle
 
     func startMonitoring() {
-        // Start periodic status rechecking
+        // Periodic status rechecking is host-agnostic — keep as-is.
         Task {
             await SessionStore.shared.startPeriodicStatusCheck()
         }
 
-        HookSocketServer.shared.start(
-            onEvent: { event in
+        // Start the local hook server. SSHBridgeController will spin
+        // up additional servers per remote host (Task 9).
+        startServer(host: .local, socketPath: Self.localSocketPath)
+    }
+
+    /// Spin up a HookSocketServer for one host. Idempotent — if a server
+    /// already exists for that host, this is a no-op.
+    func startServer(host: SessionHost, socketPath: String) {
+        guard servers[host] == nil else { return }
+        let server = HookSocketServer(socketPath: socketPath, host: host)
+        server.start(
+            onEvent: { [weak self] event, eventHost in
                 Task {
-                    await SessionStore.shared.process(.hookReceived(event))
+                    await SessionStore.shared.process(.hookReceived(event, host: eventHost))
                 }
 
                 if event.sessionPhase == .processing {
@@ -58,11 +92,21 @@ class ClaudeSessionMonitor: ObservableObject {
                 }
 
                 if event.event == "Stop" {
-                    HookSocketServer.shared.cancelPendingPermissions(sessionId: event.sessionId)
+                    Task { @MainActor in
+                        guard let self else { return }
+                        for server in self.servers.values {
+                            server.cancelPendingPermissions(sessionId: event.sessionId)
+                        }
+                    }
                 }
 
                 if event.event == "PostToolUse", let toolUseId = event.toolUseId {
-                    HookSocketServer.shared.cancelPendingPermission(toolUseId: toolUseId)
+                    Task { @MainActor in
+                        guard let self else { return }
+                        for server in self.servers.values {
+                            server.cancelPendingPermission(toolUseId: toolUseId)
+                        }
+                    }
                 }
             },
             onPermissionFailure: { sessionId, toolUseId in
@@ -73,10 +117,19 @@ class ClaudeSessionMonitor: ObservableObject {
                 }
             }
         )
+        servers[host] = server
+    }
+
+    func stopServer(host: SessionHost) {
+        servers[host]?.stop()
+        servers.removeValue(forKey: host)
     }
 
     func stopMonitoring() {
-        HookSocketServer.shared.stop()
+        for server in servers.values {
+            server.stop()
+        }
+        servers.removeAll()
         Task {
             await SessionStore.shared.stopPeriodicStatusCheck()
         }
@@ -91,10 +144,12 @@ class ClaudeSessionMonitor: ObservableObject {
                 return
             }
 
-            HookSocketServer.shared.respondToPermission(
-                toolUseId: permission.toolUseId,
-                decision: "allow"
-            )
+            for server in servers.values {
+                server.respondToPermission(
+                    toolUseId: permission.toolUseId,
+                    decision: "allow"
+                )
+            }
 
             await SessionStore.shared.process(
                 .permissionApproved(sessionId: sessionId, toolUseId: permission.toolUseId)
@@ -109,11 +164,13 @@ class ClaudeSessionMonitor: ObservableObject {
                 return
             }
 
-            HookSocketServer.shared.respondToPermission(
-                toolUseId: permission.toolUseId,
-                decision: "deny",
-                reason: reason
-            )
+            for server in servers.values {
+                server.respondToPermission(
+                    toolUseId: permission.toolUseId,
+                    decision: "deny",
+                    reason: reason
+                )
+            }
 
             await SessionStore.shared.process(
                 .permissionDenied(sessionId: sessionId, toolUseId: permission.toolUseId, reason: reason)

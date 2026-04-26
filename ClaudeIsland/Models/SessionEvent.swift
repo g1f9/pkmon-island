@@ -14,7 +14,7 @@ enum SessionEvent: Sendable {
     // MARK: - Hook Events (from HookSocketServer)
 
     /// A hook event was received from Claude Code
-    case hookReceived(HookEvent)
+    case hookReceived(HookEvent, host: SessionHost)
 
     // MARK: - Permission Events (user actions)
 
@@ -183,8 +183,8 @@ extension HookEvent {
 extension SessionEvent: CustomStringConvertible {
     nonisolated var description: String {
         switch self {
-        case .hookReceived(let event):
-            return "hookReceived(\(event.event), session: \(event.sessionId.prefix(8)))"
+        case .hookReceived(let event, let host):
+            return "hookReceived(\(event.event), session: \(event.sessionId.prefix(8)), host: \(host.displayName))"
         case .permissionApproved(let sessionId, let toolUseId):
             return "permissionApproved(session: \(sessionId.prefix(8)), tool: \(toolUseId.prefix(12)))"
         case .permissionDenied(let sessionId, let toolUseId, _):
