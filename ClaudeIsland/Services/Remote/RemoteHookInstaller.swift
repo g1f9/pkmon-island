@@ -18,6 +18,7 @@ enum RemoteHookInstaller {
         case unreachable(stderr: String)
         case versionDetectionFailed
         case scpFailed(stderr: String)
+        case moveFailed(stderr: String)
         case settingsReadFailed(stderr: String)
         case settingsWriteFailed(stderr: String)
         case bundledScriptMissing
@@ -27,6 +28,7 @@ enum RemoteHookInstaller {
             case .unreachable(let s): return "Host unreachable: \(s)"
             case .versionDetectionFailed: return "Could not detect Claude Code on remote (PATH issue?)"
             case .scpFailed(let s): return "scp failed: \(s)"
+            case .moveFailed(let s): return "Move/chmod hook script failed: \(s)"
             case .settingsReadFailed(let s): return "Read remote settings.json failed: \(s)"
             case .settingsWriteFailed(let s): return "Write remote settings.json failed: \(s)"
             case .bundledScriptMissing: return "Hook script not found in app bundle"
@@ -85,7 +87,7 @@ enum RemoteHookInstaller {
             remoteCommand: "mv /tmp/claude-island-state.py ~/.claude/hooks/claude-island-state.py && chmod +x ~/.claude/hooks/claude-island-state.py",
             timeout: 5
         )
-        guard move.ok else { throw InstallError.scpFailed(stderr: move.stderr) }
+        guard move.ok else { throw InstallError.moveFailed(stderr: move.stderr) }
 
         // 5. Merge ~/.claude/settings.json
         try await mergeSettings(on: host, claudeVersionOutput: versionResult.stdout)
@@ -140,8 +142,18 @@ enum RemoteHookInstaller {
         }
         hooks = cleaned
 
-        // Reuse local HookInstaller's version gating.
-        let parsedVersion = parseClaudeVersion(claudeVersionOutput)
+        // Reuse local HookInstaller's version gating. Take only the LAST
+        // non-empty line of the bash -lc output: a remote ~/.bashrc with
+        // a "Welcome to Ubuntu 20.04.3" banner would otherwise feed
+        // 20.04.3 into firstMatch and convince the gate that every event
+        // is supported. The actual `claude --version` output is the last
+        // line printed by the remote shell; lines before it are noise.
+        let lastLine = claudeVersionOutput
+            .split(whereSeparator: { $0.isNewline })
+            .reversed()
+            .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+            .map(String.init) ?? claudeVersionOutput
+        let parsedVersion = HookInstaller.parseClaudeCodeVersion(from: lastLine)
 
         // We don't assume any particular `python` on the remote — the
         // bundled script has a `#!/usr/bin/env python3` shebang and we
@@ -234,19 +246,4 @@ enum RemoteHookInstaller {
         return out
     }
 
-    private static func parseClaudeVersion(_ output: String) -> HookInstaller.ClaudeCodeVersion? {
-        // Output format: "X.Y.Z (Claude Code)" or similar
-        let pattern = #"(\d+)\.(\d+)\.(\d+)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
-              match.numberOfRanges >= 4 else {
-            return nil
-        }
-        func num(_ idx: Int) -> Int {
-            guard let r = Range(match.range(at: idx), in: output),
-                  let n = Int(output[r]) else { return 0 }
-            return n
-        }
-        return HookInstaller.ClaudeCodeVersion(major: num(1), minor: num(2), patch: num(3))
-    }
 }
