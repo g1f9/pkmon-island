@@ -24,6 +24,8 @@ struct ChatView: View {
     @State private var newMessageCount: Int = 0
     @State private var previousHistoryCount: Int = 0
     @State private var isBottomVisible: Bool = true
+    @State private var resolvedInjector: (any MessageInjector)?
+    @State private var lastInjectFailed: Bool = false
     @FocusState private var isInputFocused: Bool
 
     init(sessionId: String, initialSession: SessionState, sessionMonitor: ClaudeSessionMonitor, viewModel: NotchViewModel) {
@@ -92,6 +94,7 @@ struct ChatView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isWaitingForApproval)
         .animation(nil, value: viewModel.status)
         .task {
+            resolvedInjector = await MessageInjectorRegistry.shared.resolve(for: session)
             // Skip if already loaded (prevents redundant work on view recreation)
             guard !hasLoadedOnce else { return }
             hasLoadedOnce = true
@@ -156,6 +159,13 @@ struct ChatView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         shouldScrollToBottom = true
                     }
+                }
+            }
+        }
+        .onReceive(sessionMonitor.$instances) { sessions in
+            if let updated = sessions.first(where: { $0.sessionId == sessionId }) {
+                Task {
+                    resolvedInjector = await MessageInjectorRegistry.shared.resolve(for: updated)
                 }
             }
         }
@@ -353,9 +363,9 @@ struct ChatView: View {
 
     // MARK: - Input Bar
 
-    /// Can send messages only if session is in tmux
+    /// True iff the registry has a backend that can route text to this session.
     private var canSendMessages: Bool {
-        session.isInTmux && session.tty != nil
+        resolvedInjector != nil
     }
 
     private var inputBar: some View {
@@ -479,42 +489,33 @@ struct ChatView: View {
     }
 
     private func sendToSession(_ text: String) async {
-        guard session.isInTmux else { return }
-        guard let tty = session.tty else { return }
-
-        if let target = await findTmuxTarget(tty: tty) {
-            _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
-        }
-    }
-
-    private func findTmuxTarget(tty: String) async -> TmuxTarget? {
-        guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else {
-            return nil
+        let injector: (any MessageInjector)?
+        if let cached = resolvedInjector {
+            injector = cached
+        } else {
+            injector = await MessageInjectorRegistry.shared.resolve(for: session)
         }
 
-        do {
-            let output = try await ProcessExecutor.shared.run(
-                tmuxPath,
-                arguments: ["list-panes", "-a", "-F", "#{session_name}:#{window_index}.#{pane_index} #{pane_tty}"]
-            )
-
-            let lines = output.components(separatedBy: "\n")
-            for line in lines {
-                let parts = line.components(separatedBy: " ")
-                guard parts.count >= 2 else { continue }
-
-                let target = parts[0]
-                let paneTty = parts[1].replacingOccurrences(of: "/dev/", with: "")
-
-                if paneTty == tty {
-                    return TmuxTarget(from: target)
-                }
-            }
-        } catch {
-            return nil
+        guard let injector else {
+            lastInjectFailed = true
+            return
         }
 
-        return nil
+        let ok = await injector.inject(text, into: session)
+        if ok {
+            lastInjectFailed = false
+            return
+        }
+
+        // First try failed. The session's environment may have shifted (Ghostty
+        // closed the tab, TCC just got denied, tmux pane died) — re-resolve once.
+        if let fresh = await MessageInjectorRegistry.shared.resolve(for: session),
+           fresh.displayName != injector.displayName {
+            let ok2 = await fresh.inject(text, into: session)
+            lastInjectFailed = !ok2
+        } else {
+            lastInjectFailed = true
+        }
     }
 }
 
