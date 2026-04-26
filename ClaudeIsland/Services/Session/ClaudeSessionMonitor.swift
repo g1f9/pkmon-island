@@ -44,7 +44,19 @@ class ClaudeSessionMonitor: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
+    // MARK: - Singleton
+
+    private static var sharedInstance: ClaudeSessionMonitor?
+
+    static var shared: ClaudeSessionMonitor {
+        if let s = sharedInstance { return s }
+        let new = ClaudeSessionMonitor()
+        sharedInstance = new
+        return new
+    }
+
     init() {
+        Self.sharedInstance = self
         SessionStore.shared.sessionsPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] sessions in

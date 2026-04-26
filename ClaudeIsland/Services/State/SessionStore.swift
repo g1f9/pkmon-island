@@ -114,6 +114,9 @@ actor SessionStore {
         case .agentFileUpdated:
             // No longer used - subagent tools are populated from JSONL completion
             break
+
+        case .bridgeStateChanged(let host, let state):
+            await processBridgeStateChange(host: host, state: state)
         }
 
         publishState()
@@ -215,6 +218,16 @@ actor SessionStore {
             host: host,
             phase: .idle
         )
+    }
+
+    // MARK: - Bridge State
+
+    private func processBridgeStateChange(host: SessionHost, state: RemoteConnectionState?) async {
+        for (id, var session) in sessions where session.host == host {
+            session.connectionState = state
+            sessions[id] = session
+        }
+        publishState()
     }
 
     private func processToolTracking(event: HookEvent, session: inout SessionState) {

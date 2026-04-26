@@ -16,6 +16,11 @@ enum SessionEvent: Sendable {
     /// A hook event was received from Claude Code
     case hookReceived(HookEvent, host: SessionHost)
 
+    // MARK: - Bridge Events
+
+    /// SSH bridge connection state changed for a remote host
+    case bridgeStateChanged(host: SessionHost, state: RemoteConnectionState?)
+
     // MARK: - Permission Events (user actions)
 
     /// User approved a permission request
@@ -215,6 +220,8 @@ extension SessionEvent: CustomStringConvertible {
             return "subagentStopped(session: \(sessionId.prefix(8)), task: \(taskToolId.prefix(12)))"
         case .agentFileUpdated(let sessionId, let taskToolId, let tools):
             return "agentFileUpdated(session: \(sessionId.prefix(8)), task: \(taskToolId.prefix(12)), tools: \(tools.count))"
+        case .bridgeStateChanged(let host, let state):
+            return "bridgeStateChanged(host: \(host.displayName), state: \(state.map { String(describing: $0) } ?? "nil"))"
         }
     }
 }
