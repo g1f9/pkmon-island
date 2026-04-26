@@ -2085,10 +2085,14 @@ git commit -m "feat: add Remote Hosts section to notch menu"
 Run:
 
 ```bash
-grep -rn "\.projectName" ClaudeIsland/UI/
+grep -rn "\.projectName" ClaudeIsland/
 ```
 
-For each hit, decide whether the user-facing label should be `displayProjectName` (host-prefixed) or `projectName` (raw). Default: switch to `displayProjectName`.
+Two known sites confirmed during Task 3 code review (don't miss them):
+- `ClaudeIsland/UI/Views/StatusBarPopoverView.swift` line ~91 — status-bar title.
+- `ClaudeIsland/Services/State/SessionStore.swift` line ~1173 — sort key for the session list. **This one is in a service file, not UI**, so a `grep` restricted to `UI/` would miss it.
+
+For each hit, decide whether the user-facing label should be `displayProjectName` (host-prefixed) or `projectName` (raw). Default: switch to `displayProjectName`. Sort keys: switch too — list ordering should be by the displayed name.
 
 - [ ] **Step 2: Replace `session.projectName` with `session.displayProjectName` at user-facing sites**
 
