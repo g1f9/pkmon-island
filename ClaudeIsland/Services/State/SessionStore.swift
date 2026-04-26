@@ -223,11 +223,13 @@ actor SessionStore {
     // MARK: - Bridge State
 
     private func processBridgeStateChange(host: SessionHost, state: RemoteConnectionState?) async {
+        // process(_:) calls publishState() unconditionally after dispatch,
+        // so don't double-publish here. Matches the convention used by every
+        // other process* sub-method in this file.
         for (id, var session) in sessions where session.host == host {
             session.connectionState = state
             sessions[id] = session
         }
-        publishState()
     }
 
     private func processToolTracking(event: HookEvent, session: inout SessionState) {
