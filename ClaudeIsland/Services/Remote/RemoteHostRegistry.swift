@@ -38,6 +38,12 @@ final class RemoteHostRegistry: ObservableObject {
 
     func update(_ host: RemoteHost) {
         guard let idx = hosts.firstIndex(where: { $0.id == host.id }) else { return }
+        // Prevent rename collisions: name uniqueness is load-bearing for
+        // SessionHost.remote(name:) routing and per-host socket paths.
+        guard !hosts.contains(where: { $0.name == host.name && $0.id != host.id }) else {
+            registryLogger.warning("RemoteHost name '\(host.name, privacy: .public)' already taken")
+            return
+        }
         hosts[idx] = host
         save()
     }
