@@ -148,23 +148,31 @@ struct ChatView: View {
             }
         }
         .onReceive(sessionMonitor.$instances) { sessions in
-            if let updated = sessions.first(where: { $0.sessionId == sessionId }),
-               updated != session {
-                // Check if permission was just accepted (transition from waitingForApproval to processing)
+            guard let updated = sessions.first(where: { $0.sessionId == sessionId }) else {
+                return
+            }
+
+            // Re-resolve the injector only when a field that affects backend
+            // choice changes. Otherwise we'd run a tmux/AppleScript probe on
+            // every hook event for any session — which queues up under load.
+            let injectorInputsChanged =
+                updated.cwd != session.cwd
+                || updated.tty != session.tty
+                || updated.isInTmux != session.isInTmux
+
+            if updated != session {
                 let wasWaiting = isWaitingForApproval
                 session = updated
                 let isNowProcessing = updated.phase == .processing
 
                 if wasWaiting && isNowProcessing {
-                    // Scroll to bottom after permission accepted (with slight delay)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         shouldScrollToBottom = true
                     }
                 }
             }
-        }
-        .onReceive(sessionMonitor.$instances) { sessions in
-            if let updated = sessions.first(where: { $0.sessionId == sessionId }) {
+
+            if injectorInputsChanged {
                 scheduleResolve(for: updated)
             }
         }
