@@ -45,3 +45,6 @@ CLAUDE.md
 
 # Superpowers brainstorming session artifacts
 .superpowers/
+
+# Git worktrees
+.worktrees/
