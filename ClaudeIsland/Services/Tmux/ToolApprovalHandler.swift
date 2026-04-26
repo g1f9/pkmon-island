@@ -43,11 +43,6 @@ actor ToolApprovalHandler {
         return true
     }
 
-    /// Send a message to a tmux target
-    func sendMessage(_ message: String, to target: TmuxTarget) async -> Bool {
-        await sendKeys(to: target, keys: message, pressEnter: true)
-    }
-
     // MARK: - Private Methods
 
     private func sendKeys(to target: TmuxTarget, keys: String, pressEnter: Bool) async -> Bool {
