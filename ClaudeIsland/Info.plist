@@ -17,6 +17,12 @@
     <key>NSHumanReadableCopyright</key>
     <string>Copyright 2025. All rights reserved.</string>
 
+    <!-- Required so macOS will prompt for Automation access when Vibe Notch
+         sends an AppleEvent to Ghostty (or any other app). Without this key
+         macOS silently denies the request and the user never sees a dialog. -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Vibe Notch sends your chat replies to your running Claude Code session by pasting them into Ghostty's terminal window.</string>
+
     <!-- Sparkle Update Configuration -->
     <key>SUFeedURL</key>
     <string>https://vibenotch.app/appcast.xml</string>

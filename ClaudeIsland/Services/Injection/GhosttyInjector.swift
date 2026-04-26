@@ -23,11 +23,36 @@ struct GhosttyInjector: MessageInjector {
     private let ghosttyBundleId = "com.mitchellh.ghostty"
 
     func canInject(into session: SessionState) async -> Bool {
-        guard !session.cwd.isEmpty else { return false }
-        guard isGhosttyRunning() else { return false }
+        let prefix = session.sessionId.prefix(8)
+        guard !session.cwd.isEmpty else {
+            injectLogger.info("ghostty canInject \(prefix, privacy: .public): empty cwd")
+            return false
+        }
+        guard isGhosttyRunning() else {
+            injectLogger.info("ghostty canInject \(prefix, privacy: .public): app not running")
+            return false
+        }
 
         let normalized = Self.normalize(cwd: session.cwd)
-        return await MainActor.run { (try? probeMatchingTerminal(cwd: normalized)) ?? false }
+        return await MainActor.run {
+            do {
+                let matched = try probeMatchingTerminal(cwd: normalized)
+                injectLogger.info(
+                    "ghostty canInject \(prefix, privacy: .public): probe cwd=\(normalized, privacy: .public) match=\(matched, privacy: .public)"
+                )
+                return matched
+            } catch AppleScriptError.permissionDenied {
+                injectLogger.error(
+                    "ghostty canInject \(prefix, privacy: .public): TCC permission denied — grant in System Settings → Privacy & Security → Automation"
+                )
+                return false
+            } catch {
+                injectLogger.error(
+                    "ghostty canInject \(prefix, privacy: .public): probe error \(error.localizedDescription, privacy: .public)"
+                )
+                return false
+            }
+        }
     }
 
     func inject(_ text: String, into session: SessionState) async -> Bool {
@@ -77,6 +102,8 @@ struct GhosttyInjector: MessageInjector {
 
     /// Lightweight existence probe — returns true iff Ghostty has at least
     /// one terminal whose working directory matches `cwd`.
+    /// Throws on AppleScript errors (including TCC denial) so the caller
+    /// can distinguish "no match" from "permission missing" in logs.
     @MainActor
     private func probeMatchingTerminal(cwd: String) throws -> Bool {
         let escapedCwd = AppleScriptRunner.escape(cwd)
@@ -85,15 +112,8 @@ struct GhosttyInjector: MessageInjector {
             return (count of (every terminal whose working directory is equal to "\(escapedCwd)")) > 0
         end tell
         """
-        do {
-            let result = try AppleScriptRunner.run(script)
-            return result.booleanValue
-        } catch AppleScriptError.permissionDenied {
-            // Until automation permission is granted we cannot answer the
-            // question. Return false so the registry falls through to tmux;
-            // the actual permission prompt fires at first inject.
-            return false
-        }
+        let result = try AppleScriptRunner.run(script)
+        return result.booleanValue
     }
 
     /// Normalize a cwd so equality matches Ghostty's `working directory`
