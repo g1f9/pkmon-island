@@ -156,28 +156,15 @@ actor SessionStore {
             session.phaseBeforeCompacting = session.phase
         }
 
+        // PostCompact: prefer restoring the captured pre-compaction phase over
+        // whatever the hook script reported. Auto-compactions between turns
+        // would otherwise wedge the UI in processing forever (no Stop hook
+        // follows a between-turn compaction). Falls back to determinePhase()
+        // when nothing was captured.
         let effectivePhase: SessionPhase
-        if event.event == "PostCompact" {
-            // Restore the captured pre-compaction phase only if we're still in
-            // .compacting. If real activity (UserPromptSubmit, PreToolUse,
-            // idle_prompt notification, …) already moved phase out, the capture
-            // is stale and PostCompact's status="waiting_for_input" default is
-            // ceremonial — honor whatever the session is doing now. Either way,
-            // drop the capture so a later event can't re-trigger restore.
-            if session.phase == .compacting, let saved = session.phaseBeforeCompacting {
-                effectivePhase = saved
-            } else {
-                effectivePhase = session.phase
-            }
+        if event.event == "PostCompact", let saved = session.phaseBeforeCompacting {
+            effectivePhase = saved
             session.phaseBeforeCompacting = nil
-        } else if event.event == "PreCompact", session.phase == .idle {
-            // Auto-recaps during idle should not flip the user-visible phase.
-            // The menu bar coalesces .processing | .compacting into "working"
-            // (StatusBarController phase.isActive), so a between-turn recap
-            // looks like Claude spontaneously woke up. Stay in .idle; the
-            // capture above still lets PostCompact restore correctly without
-            // any visible change.
-            effectivePhase = .idle
         } else if (event.event == "SubagentStart" || event.event == "SubagentStop")
                     && (session.phase == .idle || session.phase == .waitingForInput) {
             // Claude Code 2.1.119+ runs /recap (away_summary) as an internal
