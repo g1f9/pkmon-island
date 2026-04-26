@@ -60,6 +60,29 @@ that are easy to break and not obvious from a single file.
   still use `send-keys -l "1"|"2"|"n"`. The approval prompt is a modal
   expecting a single character, not a paste — leaving those alone.
 
+### Ghostty user prerequisite: `keybind = enter=text:\r`
+
+Ghostty 1.3's `send key "enter"` AppleScript event encodes Enter via
+the active keyboard mode. When the running TUI has Kitty keyboard
+protocol on (Claude Code's React Ink does), Ghostty produces a CSI u
+sequence that Ink doesn't recognize as submit — text lands in the
+input buffer but never gets sent. Same upstream bug as Ghostty
+Discussion #9264 (Copilot CLI).
+
+Workaround that the user must add to `~/.config/ghostty/config`:
+
+```
+keybind = enter=text:\r
+```
+
+Ghostty must be **fully quit and relaunched** for this to take effect
+on existing terminals (Cmd+Shift+, reload doesn't propagate to
+already-open surfaces). Surface this in user-facing setup docs.
+
+Also note: `Info.plist` declares `NSAppleEventsUsageDescription` so
+macOS actually shows the Automation permission prompt; without that
+key the request is silently denied.
+
 ## JSONL parsing invariants
 
 - `~/.claude/projects/{cwd}/*.jsonl` is parsed incrementally; `lastSyncOffset`
