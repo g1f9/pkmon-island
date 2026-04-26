@@ -178,6 +178,15 @@ actor SessionStore {
             // capture above still lets PostCompact restore correctly without
             // any visible change.
             effectivePhase = .idle
+        } else if (event.event == "SubagentStart" || event.event == "SubagentStop")
+                    && (session.phase == .idle || session.phase == .waitingForInput) {
+            // Claude Code 2.1.119+ runs /recap (away_summary) as an internal
+            // subagent — SubagentStart/Stop fire even though the user-visible
+            // session is at rest. The python hook script sets status=processing
+            // ("main session continues processing"), which is true for *real*
+            // Task subagents but lies about recap subagents. Honor the at-rest
+            // phase instead of flipping to .processing.
+            effectivePhase = session.phase
         } else {
             effectivePhase = newPhase
         }
