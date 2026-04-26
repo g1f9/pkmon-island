@@ -80,6 +80,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         coreSessionMonitor = ClaudeSessionMonitor()
         coreSessionMonitor?.startMonitoring()
 
+        // Boot the SSH bridge controller after the local hook server is
+        // up. The controller idempotently no-ops if no remote hosts are
+        // configured; once one is added via the Settings UI it spins up
+        // the per-host server and the persistent ssh -N -R tunnel.
+        SSHBridgeController.shared.start()
+
         windowManager = WindowManager()
         applyDisplayMode(AppSettings.displayMode)
 

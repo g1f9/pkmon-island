@@ -1153,6 +1153,10 @@ actor SessionStore {
             // phase without any hook activity for too long, force it back to
             // idle. The next real hook event (Stop, PreToolUse, etc.) will
             // take it from there.
+            // Skip remote sessions whose bridge is mid-reconnect — the
+            // hook silence is the network's fault, not Claude's, so demoting
+            // .processing → .idle would be a false signal.
+            if case .reconnecting = session.connectionState { continue }
             let isActive = session.phase == .processing || session.phase == .compacting
             let stale = now.timeIntervalSince(session.lastActivity) > Self.staleActivePhaseThreshold
             if isActive, stale, session.phase.canTransition(to: .idle) {
