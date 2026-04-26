@@ -116,20 +116,27 @@ final class SSHBridgeController {
 
     private func reconcile(with hosts: [RemoteHost]) {
         let monitor = ClaudeSessionMonitor.shared
+        let enabledHosts = hosts.filter { $0.enabled }
 
-        // Stop bridges for hosts that were removed or disabled
-        let currentIds = Set(hosts.filter { $0.enabled }.map { $0.id })
-        for id in bridges.keys where !currentIds.contains(id) {
+        // Stop bridges for hosts that were removed or disabled.
+        // Materialize the keys to a local array first — `stopBridge` mutates
+        // `bridges` via `removeValue`, and iterating `bridges.keys` while
+        // mutating is undefined behavior.
+        let currentIds = Set(enabledHosts.map { $0.id })
+        let staleBridgeIds = bridges.keys.filter { !currentIds.contains($0) }
+        for id in staleBridgeIds {
             stopBridge(hostId: id)
         }
 
         // Start bridges for newly enabled hosts
-        for host in hosts where host.enabled {
+        for host in enabledHosts {
             startBridge(for: host, monitor: monitor)
         }
 
-        // Stop servers for hosts that no longer exist
-        let liveNames = Set(hosts.map { $0.name })
+        // Stop servers for hosts that are gone OR have been disabled. Servers
+        // hold an open Unix socket fd; without this filter, a disabled host
+        // leaks its server until the user fully removes it.
+        let liveNames = Set(enabledHosts.map { $0.name })
         for h in monitor.knownRemoteHostNames where !liveNames.contains(h) {
             monitor.stopServer(host: .remote(name: h))
         }
