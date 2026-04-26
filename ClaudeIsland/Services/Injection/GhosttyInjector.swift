@@ -43,7 +43,11 @@ struct GhosttyInjector: MessageInjector {
 
     func canInject(into session: SessionState) async -> Bool {
         let prefix = session.sessionId.prefix(8)
-        guard !session.cwd.isEmpty else {
+        // Cwd is only used by the local cwd-fallback path. Remote
+        // sessions resolve via GhosttySurfaceMatcher (ssh-child probe)
+        // and never look at session.cwd, so an empty cwd on a remote
+        // session must NOT short-circuit injection.
+        if session.host == .local, session.cwd.isEmpty {
             injectLogger.info("ghostty canInject \(prefix, privacy: .public): empty cwd")
             return false
         }
@@ -138,6 +142,12 @@ struct GhosttyInjector: MessageInjector {
         let script: String
         let pathName: String
         if case .remote(let hostName) = session.host {
+            // Two MainActor hops per remote inject: this one to resolve
+            // the tty (RemoteHostRegistry and GhosttySurfaceMatcher are
+            // both @MainActor) and another below for the AppleScript run
+            // itself. The hops are necessary — both pieces are
+            // main-actor-bound — and the cost is negligible compared to
+            // the AppleScript round-trip. Don't try to merge them.
             let resolved: String? = await MainActor.run {
                 guard let host = RemoteHostRegistry.shared.hosts.first(where: { $0.name == hostName }),
                       let tty = GhosttySurfaceMatcher.matchingTty(for: session, host: host) else {
