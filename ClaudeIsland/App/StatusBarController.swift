@@ -24,6 +24,17 @@ final class StatusBarController: NSObject {
     private let viewModel: NotchViewModel
     private var cancellables = Set<AnyCancellable>()
     private var eventMonitor: Any?
+    private var appearanceObserver: NSKeyValueObservation?
+    private var lastState: BadgeState = .idle
+
+    /// What the menu-bar icon currently represents. We render a single composite
+    /// NSImage per state with a *fixed outer frame*, so the status item width
+    /// never changes — eliminating menu-bar jitter when state transitions.
+    private enum BadgeState: Equatable {
+        case idle
+        case working(Int)
+        case approval(Int)
+    }
 
     init(sessionMonitor: ClaudeSessionMonitor) {
         self.sessionMonitor = sessionMonitor
@@ -51,6 +62,8 @@ final class StatusBarController: NSObject {
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil
         }
+        appearanceObserver?.invalidate()
+        appearanceObserver = nil
         cancellables.removeAll()
         NSStatusBar.system.removeStatusItem(statusItem)
     }
@@ -91,32 +104,76 @@ final class StatusBarController: NSObject {
             logger.error("statusItem.button is nil — system rejected the request")
             return
         }
-        if let image = Self.renderCrabImage() {
-            button.image = image
-            button.imagePosition = .imageLeading
-            button.attributedTitle = NSAttributedString(string: "")
-        } else {
-            // Fallback so the item never collapses to 0 width.
-            button.image = nil
-            button.imagePosition = .noImage
-            button.attributedTitle = NSAttributedString(
-                string: "VN",
-                attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .bold)]
-            )
-        }
         button.target = self
         button.action = #selector(togglePopover(_:))
         statusItem.isVisible = true
+
+        applyState(lastState, on: button)
+
+        // The approval-state image is non-template (mixes red badge with the
+        // crab) so we must re-render when the menu-bar appearance flips
+        // between light and dark to keep the crab tinted correctly.
+        appearanceObserver = button.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            // KVO fires on the main thread for UI properties; assert that and
+            // call back into the main-actor-isolated controller synchronously.
+            MainActor.assumeIsolated {
+                guard let self, let button = self.statusItem.button else { return }
+                self.applyState(self.lastState, on: button)
+            }
+        }
     }
 
-    /// Rasterise the pixel-art crab as a flat white silhouette marked as a
-    /// template image so macOS auto-tints it to match every other menu-bar
-    /// icon (white on dark menu bars, black on light ones).
-    private static func renderCrabImage() -> NSImage? {
-        let renderer = ImageRenderer(content: ClaudeCrabIcon(size: 16, color: .white))
+    /// Render the crab + a fixed-width badge slot into a single NSImage.
+    /// The outer frame is locked to the same dimensions for every state,
+    /// guaranteeing the status item width never changes.
+    ///
+    /// Idle/working states use a template image (system tints to menu-bar
+    /// color). Approval state mixes red with the crab so it must be
+    /// non-template — the caller picks the crab color based on appearance.
+    private static func renderBadgeImage(state: BadgeState, isDark: Bool) -> NSImage? {
+        let crabColor: Color
+        let isTemplate: Bool
+        switch state {
+        case .approval:
+            crabColor = isDark ? .white : .black
+            isTemplate = false
+        default:
+            crabColor = .white
+            isTemplate = true
+        }
+
+        let badge: AnyView
+        switch state {
+        case .idle:
+            badge = AnyView(
+                Image(systemName: "zzz")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white)
+            )
+        case .working(let count):
+            badge = AnyView(
+                Text("·\(count)")
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundColor(.white)
+            )
+        case .approval(let count):
+            badge = AnyView(
+                Text("!\(count)")
+                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .foregroundColor(.red)
+            )
+        }
+
+        let view = HStack(spacing: 3) {
+            ClaudeCrabIcon(size: 14, color: crabColor)
+            badge.frame(width: 22, alignment: .leading)
+        }
+        .frame(width: 42, height: 18, alignment: .leading)
+
+        let renderer = ImageRenderer(content: view)
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         guard let image = renderer.nsImage else { return nil }
-        image.isTemplate = true
+        image.isTemplate = isTemplate
         return image
     }
 
@@ -133,17 +190,40 @@ final class StatusBarController: NSObject {
 
     private func updateBadge(from sessions: [SessionState]) {
         guard let button = statusItem.button else { return }
-        let count = sessions.filter { $0.phase.isWaitingForApproval }.count
-        if count > 0 {
-            button.attributedTitle = NSAttributedString(
-                string: " \(count)",
-                attributes: [
-                    .foregroundColor: NSColor.systemRed,
-                    .font: NSFont.systemFont(ofSize: 12, weight: .bold)
-                ]
-            )
+        let approvalCount = sessions.filter { $0.phase.isWaitingForApproval }.count
+        let workingCount = sessions.filter { $0.phase.isActive }.count
+
+        // Priority: approvals (urgent) > working (informational) > idle (Zzz).
+        // Idle gets a sleeping icon rather than blank space so the badge slot
+        // is *always* occupied — image dimensions stay constant, no jitter.
+        let next: BadgeState
+        if approvalCount > 0 {
+            next = .approval(approvalCount)
+        } else if workingCount > 0 {
+            next = .working(workingCount)
         } else {
+            next = .idle
+        }
+        if next != lastState {
+            applyState(next, on: button)
+        }
+    }
+
+    private func applyState(_ state: BadgeState, on button: NSStatusBarButton) {
+        lastState = state
+        let isDark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        if let image = Self.renderBadgeImage(state: state, isDark: isDark) {
+            button.image = image
+            button.imagePosition = .imageOnly
             button.attributedTitle = NSAttributedString(string: "")
+        } else {
+            // Fallback so the item never collapses to 0 width.
+            button.image = nil
+            button.imagePosition = .noImage
+            button.attributedTitle = NSAttributedString(
+                string: "VN",
+                attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .bold)]
+            )
         }
     }
 
