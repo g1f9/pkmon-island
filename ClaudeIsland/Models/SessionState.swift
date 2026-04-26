@@ -23,6 +23,16 @@ struct SessionState: Equatable, Identifiable, Sendable {
     var tty: String?
     var isInTmux: Bool
 
+    // MARK: - Host
+
+    /// Which machine this session is running on. Local sessions get .local;
+    /// SSH-remote sessions are tagged at HookSocketServer ingress.
+    var host: SessionHost
+
+    /// Bridge connectivity overlay (only meaningful for .remote hosts).
+    /// nil for local sessions.
+    var connectionState: RemoteConnectionState?
+
     // MARK: - State Machine
 
     /// Current phase in the session lifecycle
@@ -76,6 +86,8 @@ struct SessionState: Equatable, Identifiable, Sendable {
         pid: Int? = nil,
         tty: String? = nil,
         isInTmux: Bool = false,
+        host: SessionHost = .local,
+        connectionState: RemoteConnectionState? = nil,
         phase: SessionPhase = .idle,
         chatItems: [ChatHistoryItem] = [],
         toolTracker: ToolTracker = ToolTracker(),
@@ -91,10 +103,13 @@ struct SessionState: Equatable, Identifiable, Sendable {
     ) {
         self.sessionId = sessionId
         self.cwd = cwd
-        self.projectName = projectName ?? URL(fileURLWithPath: cwd).lastPathComponent
+        let defaultName = URL(fileURLWithPath: cwd).lastPathComponent
+        self.projectName = projectName ?? defaultName
         self.pid = pid
         self.tty = tty
         self.isInTmux = isInTmux
+        self.host = host
+        self.connectionState = connectionState
         self.phase = phase
         self.chatItems = chatItems
         self.toolTracker = toolTracker
@@ -134,6 +149,18 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// Display title: summary > first user message > project name
     var displayTitle: String {
         conversationInfo.summary ?? conversationInfo.firstUserMessage ?? projectName
+    }
+
+    /// Project name as shown in the session list. Remote sessions are
+    /// prefixed with the host alias so users can tell "monorepo on dev-vm"
+    /// apart from "monorepo locally".
+    var displayProjectName: String {
+        switch host {
+        case .local:
+            return projectName
+        case .remote(let name):
+            return "\(name):\(projectName)"
+        }
     }
 
     /// Best hint for matching window title
