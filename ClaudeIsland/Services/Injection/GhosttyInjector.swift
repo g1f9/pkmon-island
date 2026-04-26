@@ -60,13 +60,19 @@ struct GhosttyInjector: MessageInjector {
         let escapedText = AppleScriptRunner.escape(text)
         let escapedCwd = AppleScriptRunner.escape(normalized)
 
+        // 1. Paste the text via bracketed paste (same path as Cmd+V — `/`,
+        //    `!`, `#`, embedded newlines are all inert).
+        // 2. Send a separate `enter` key event to actually submit. Without
+        //    step 2 the text just sits in Claude's input buffer.
         let script = """
         tell application id "\(ghosttyBundleId)"
             set targets to every terminal whose working directory is equal to "\(escapedCwd)"
             if (count of targets) is 0 then
                 return false
             end if
-            input text "\(escapedText)" to item 1 of targets
+            set t to item 1 of targets
+            input text "\(escapedText)" to t
+            send key "enter" to t
             return true
         end tell
         """
