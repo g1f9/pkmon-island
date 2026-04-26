@@ -10,6 +10,25 @@
 
 import Foundation
 
+/// Lock-protected single-shot gate. The continuation in `runProcess`
+/// can be resumed by either the timeout timer or the process's
+/// terminationHandler — `tryResume` ensures only the first one wins.
+/// Defined as a class so the closures running on different queues
+/// share the same flag, and so `@Sendable` constraints are satisfied
+/// by reference semantics.
+private final class ResumeGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+
+    func tryResume(_ block: () -> Void) {
+        lock.lock()
+        let already = resumed
+        resumed = true
+        lock.unlock()
+        if !already { block() }
+    }
+}
+
 enum SSHCommandRunner {
     struct Result {
         let exitCode: Int32
@@ -89,14 +108,22 @@ enum SSHCommandRunner {
             throw SSHError.launchFailed(reason: error.localizedDescription)
         }
 
+        // Single-resume guard: both the timeout firing `terminate()` and the
+        // process exiting normally end up calling resume() — without this
+        // lock, a timeout would resume(throwing:) and then terminationHandler
+        // would resume(returning:), trapping the checked continuation.
+        let resumeGate = ResumeGate()
+
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            return try await withCheckedThrowingContinuation { continuation in
                 let deadline = DispatchTime.now() + timeout
                 let timer = DispatchSource.makeTimerSource(queue: .global())
                 timer.schedule(deadline: deadline)
                 timer.setEventHandler {
                     if process.isRunning {
                         process.terminate()
+                    }
+                    resumeGate.tryResume {
                         continuation.resume(throwing: SSHError.timedOut(after: timeout))
                     }
                 }
@@ -111,7 +138,9 @@ enum SSHCommandRunner {
                         stdout: String(data: stdoutData, encoding: .utf8) ?? "",
                         stderr: String(data: stderrData, encoding: .utf8) ?? ""
                     )
-                    continuation.resume(returning: result)
+                    resumeGate.tryResume {
+                        continuation.resume(returning: result)
+                    }
                 }
             }
         } onCancel: {
