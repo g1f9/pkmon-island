@@ -1120,7 +1120,10 @@ actor SessionStore {
                 continue
             }
 
-            if let pid = session.pid {
+            // Pid liveness check is local-only. Remote sessions carry the
+            // remote machine's pid, which is meaningless on this Mac — a
+            // local kill(pid, 0) would silently cull live remote sessions.
+            if session.host == .local, let pid = session.pid {
                 let isRunning = isProcessRunning(pid: pid)
                 if !isRunning {
                     Self.logger.info("Process \(pid) no longer running, ending session \(sessionId.prefix(8))")

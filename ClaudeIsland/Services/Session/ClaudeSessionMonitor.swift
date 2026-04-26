@@ -20,8 +20,11 @@ class ClaudeSessionMonitor: ObservableObject {
     private var servers: [SessionHost: HookSocketServer] = [:]
 
     /// Local hook socket path — exactly the path Claude Code's hook
-    /// script writes to on this Mac.
-    static let localSocketPath = "/tmp/claude-island.sock"
+    /// script writes to on this Mac. Internal to the monitor — remote
+    /// servers are spun up via startServer(host:socketPath:) by
+    /// SSHBridgeController, which constructs its own paths via
+    /// remoteSocketPath(for:).
+    private static let localSocketPath = "/tmp/claude-island.sock"
 
     /// Per-remote-host socket path on the Mac side. The SSH bridge's
     /// `-R remote:local` forwards to this path.
