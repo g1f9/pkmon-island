@@ -64,11 +64,21 @@ actor SSHBridge {
 
     private func connectLoop() async {
         var attempt = 0
+        setState(.connecting)
         while !Task.isCancelled {
-            setState(attempt == 0 ? .connecting : .reconnecting(attempt: attempt))
             let exitedCleanly = await runOnce()
             if Task.isCancelled || state == .idle { return }
             attempt += 1
+            // Always transition out of any post-runOnce state (.connected /
+            // .failed / .connecting) into .reconnecting before sleeping.
+            // Without this, .failed(reason:) from a launch error would stay
+            // visible to UI for the entire backoff window even though we
+            // are already planning to retry — making .failed semantically
+            // ambiguous (is it terminal, or per-attempt?). Holding
+            // .reconnecting throughout the sleep makes the contract clear:
+            // .failed only ever appears for the brief window between
+            // launch failure and the cancellation guard above.
+            setState(.reconnecting(attempt: attempt))
             let waitNs = backoff(forAttempt: attempt)
             bridgeLogger.info(
                 "SSH tunnel for \(self.host.name, privacy: .public) exited (clean=\(exitedCleanly, privacy: .public)); reconnecting in \(waitNs / 1_000_000_000, privacy: .public)s"
@@ -113,6 +123,14 @@ actor SSHBridge {
             setState(.connected)
         }
 
+        // This await DOES NOT respond to Task cancellation directly —
+        // withCheckedContinuation has no built-in cancellation hook. The
+        // ONLY way out of this await is for `terminationHandler` to fire,
+        // which requires the ssh subprocess to exit. `stop()` triggers
+        // exit by calling `terminateProcess()` (SIGTERM); without that,
+        // cancelling the parent Task here will leave this coroutine
+        // parked indefinitely. Don't "simplify" `stop()` by removing
+        // `terminateProcess()`.
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             proc.terminationHandler = { _ in continuation.resume() }
         }
