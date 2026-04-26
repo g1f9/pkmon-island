@@ -1193,7 +1193,10 @@ actor SessionStore {
     // MARK: - State Publishing
 
     private func publishState() {
-        let sortedSessions = Array(sessions.values).sorted { $0.projectName < $1.projectName }
+        // Sort by displayProjectName so remote sessions group under their
+        // host-prefixed name in the UI list rather than mixing in by raw
+        // basename.
+        let sortedSessions = Array(sessions.values).sorted { $0.displayProjectName < $1.displayProjectName }
         sessionsSubject.send(sortedSessions)
     }
 

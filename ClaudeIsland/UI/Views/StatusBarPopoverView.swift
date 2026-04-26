@@ -88,7 +88,7 @@ struct StatusBarPopoverView: View {
         switch viewModel.contentType {
         case .instances: return "Sessions"
         case .menu: return "Settings"
-        case .chat(let session): return session.projectName
+        case .chat(let session): return session.displayProjectName
         }
     }
 
