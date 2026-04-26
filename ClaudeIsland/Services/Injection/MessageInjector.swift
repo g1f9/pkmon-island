@@ -52,10 +52,3 @@ final class MessageInjectorRegistry {
         return nil
     }
 }
-
-// Temporary stub — replaced by TmuxInjector.swift (Task 4)
-struct TmuxInjector: MessageInjector {
-    let displayName = "tmux"
-    func canInject(into session: SessionState) async -> Bool { false }
-    func inject(_ text: String, into session: SessionState) async -> Bool { false }
-}
