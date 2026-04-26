@@ -1088,9 +1088,19 @@ actor SessionStore {
         Self.logger.info("Stopped periodic status check")
     }
 
+    /// Maximum time a session may stay in an active phase (.processing /
+    /// .compacting) without any hook activity before we declare it stale and
+    /// force it back to .idle. Covers cases where Stop / PostCompact hooks
+    /// never reach us — Mac sleep wakes with a half-finished compaction,
+    /// the hook script's silent socket-error swallow drops events during a
+    /// Vibe Notch restart, etc.
+    private static let staleActivePhaseThreshold: TimeInterval = 5 * 60
+
     /// Recheck status of all active sessions
     private func recheckAllSessions() {
         var removedSession = false
+        var phaseChanged = false
+        let now = Date()
 
         for (sessionId, session) in Array(sessions) {
             if session.phase == .ended {
@@ -1111,6 +1121,21 @@ actor SessionStore {
                 }
             }
 
+            // Stale-phase recovery: if a session has been stuck in an active
+            // phase without any hook activity for too long, force it back to
+            // idle. The next real hook event (Stop, PreToolUse, etc.) will
+            // take it from there.
+            let isActive = session.phase == .processing || session.phase == .compacting
+            let stale = now.timeIntervalSince(session.lastActivity) > Self.staleActivePhaseThreshold
+            if isActive, stale, session.phase.canTransition(to: .idle) {
+                Self.logger.info("Stale \(String(describing: session.phase), privacy: .public) for \(sessionId.prefix(8)) (\(Int(now.timeIntervalSince(session.lastActivity)))s idle), forcing to .idle")
+                var updated = session
+                updated.phase = .idle
+                updated.phaseBeforeCompacting = nil
+                sessions[sessionId] = updated
+                phaseChanged = true
+            }
+
             let needsSync: Bool
             switch session.phase {
             case .processing, .waitingForApproval:
@@ -1123,7 +1148,7 @@ actor SessionStore {
             }
         }
 
-        if removedSession {
+        if removedSession || phaseChanged {
             publishState()
         }
     }
