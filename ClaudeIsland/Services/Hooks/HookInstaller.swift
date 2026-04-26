@@ -166,7 +166,7 @@ struct HookInstaller {
 
     /// Returns the ordered list of (event, config) pairs to register, filtered
     /// to only events the installed Claude Code version knows about.
-    private static func supportedHookEvents(
+    static func supportedHookEvents(
         for version: ClaudeCodeVersion?,
         withMatcher: [[String: Any]],
         withMatcherAndTimeout: [[String: Any]],
