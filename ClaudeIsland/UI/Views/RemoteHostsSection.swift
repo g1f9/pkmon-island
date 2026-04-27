@@ -41,6 +41,9 @@ struct RemoteHostsSection: View {
                 Text(lastError)
                     .font(.caption)
                     .foregroundStyle(.red)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, 12)
@@ -49,12 +52,27 @@ struct RemoteHostsSection: View {
 
     @ViewBuilder
     private func hostRow(_ host: RemoteHost) -> some View {
-        HStack {
-            VStack(alignment: .leading) {
-                Text(host.name).font(.body)
-                Text(host.sshTarget).font(.caption).foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+            // Name (and sshTarget below it, only when they differ — when
+            // name was left blank during install we use sshTarget as the
+            // fallback name, so duplicating the line is just noise).
+            VStack(alignment: .leading, spacing: 1) {
+                Text(host.name)
+                    .font(.body)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if host.name != host.sshTarget {
+                    Text(host.sshTarget)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
-            Spacer()
+            // Take all available width so long names truncate instead of
+            // pushing the controls off-row.
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             Toggle("", isOn: Binding(
                 get: { host.enabled },
                 set: { newValue in
@@ -64,6 +82,7 @@ struct RemoteHostsSection: View {
                 }
             ))
             .labelsHidden()
+            .disabled(inProgress)
 
             Button("Remove") {
                 Task { await uninstallAndRemove(host) }
@@ -75,14 +94,23 @@ struct RemoteHostsSection: View {
     @ViewBuilder
     private func addForm() -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Name (e.g. dev-vm)", text: $newName)
+            TextField("Name (optional, defaults to SSH target)", text: $newName)
+                .disabled(inProgress)
             TextField("SSH target (e.g. user@host or ~/.ssh/config alias)", text: $newSSHTarget)
-            HStack {
+                .disabled(inProgress)
+            HStack(spacing: 8) {
+                if inProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Installing…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("Install") {
                     Task { await install() }
                 }
-                .disabled(inProgress || newName.isEmpty || newSSHTarget.isEmpty)
+                .disabled(inProgress || newSSHTarget.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(8)
@@ -95,7 +123,15 @@ struct RemoteHostsSection: View {
         lastError = nil
         defer { inProgress = false }
 
-        let host = RemoteHost(name: newName, sshTarget: newSSHTarget)
+        let trimmedName = newName.trimmingCharacters(in: .whitespaces)
+        let trimmedTarget = newSSHTarget.trimmingCharacters(in: .whitespaces)
+        // Empty name → reuse sshTarget. The user-visible name and the
+        // SessionHost.remote(name:) tag both end up as the target string,
+        // which is fine — short SSH aliases are typically what users want
+        // to see anyway.
+        let effectiveName = trimmedName.isEmpty ? trimmedTarget : trimmedName
+
+        let host = RemoteHost(name: effectiveName, sshTarget: trimmedTarget)
         do {
             try await RemoteHookInstaller.install(on: host)
             registry.add(host)
