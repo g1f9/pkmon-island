@@ -18,7 +18,7 @@ enum SessionTag: Equatable, Hashable {
 
     var label: String {
         switch self {
-        case .remote(let name): return "SSH \(name)"
+        case .remote(let name): return "SSH:\(name)"
         }
     }
 
