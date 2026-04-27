@@ -57,8 +57,8 @@ actor SessionStore {
         Self.logger.debug("Processing: \(String(describing: event), privacy: .public)")
 
         switch event {
-        case .hookReceived(let hookEvent):
-            await processHookEvent(hookEvent)
+        case .hookReceived(let hookEvent, let host):
+            await processHookEvent(hookEvent, host: host)
 
         case .permissionApproved(let sessionId, let toolUseId):
             await processPermissionApproved(sessionId: sessionId, toolUseId: toolUseId)
@@ -114,6 +114,9 @@ actor SessionStore {
         case .agentFileUpdated:
             // No longer used - subagent tools are populated from JSONL completion
             break
+
+        case .bridgeStateChanged(let host, let state):
+            await processBridgeStateChange(host: host, state: state)
         }
 
         publishState()
@@ -121,10 +124,10 @@ actor SessionStore {
 
     // MARK: - Hook Event Processing
 
-    private func processHookEvent(_ event: HookEvent) async {
+    private func processHookEvent(_ event: HookEvent, host: SessionHost) async {
         let sessionId = event.sessionId
         let isNewSession = sessions[sessionId] == nil
-        var session = sessions[sessionId] ?? createSession(from: event)
+        var session = sessions[sessionId] ?? createSession(from: event, host: host)
 
         // Track new session in Mixpanel
         if isNewSession {
@@ -132,7 +135,7 @@ actor SessionStore {
         }
 
         session.pid = event.pid
-        if let pid = event.pid {
+        if session.host == .local, let pid = event.pid {
             let tree = ProcessTreeBuilder.shared.buildTree()
             session.isInTmux = ProcessTreeBuilder.shared.isInTmux(pid: pid, tree: tree)
         }
@@ -199,21 +202,39 @@ actor SessionStore {
         sessions[sessionId] = session
         publishState()
 
-        if event.shouldSyncFile {
+        // JSONL on disk only exists for local sessions. Remote sessions
+        // would scheduleFileSync against the remote cwd path (which has
+        // no Mac-side file), so skip — chat history for remote sessions
+        // is reconstructed from the hook event stream alone (per spec
+        // § 数据流 · 不做的：JSONL 远端访问).
+        if session.host == .local, event.shouldSyncFile {
             scheduleFileSync(sessionId: sessionId, cwd: event.cwd)
         }
     }
 
-    private func createSession(from event: HookEvent) -> SessionState {
+    private func createSession(from event: HookEvent, host: SessionHost) -> SessionState {
         SessionState(
             sessionId: event.sessionId,
             cwd: event.cwd,
             projectName: URL(fileURLWithPath: event.cwd).lastPathComponent,
             pid: event.pid,
             tty: event.tty?.replacingOccurrences(of: "/dev/", with: ""),
-            isInTmux: false,  // Will be updated
+            isInTmux: false,  // Will be updated for local; stays false for remote
+            host: host,
             phase: .idle
         )
+    }
+
+    // MARK: - Bridge State
+
+    private func processBridgeStateChange(host: SessionHost, state: RemoteConnectionState?) async {
+        // process(_:) calls publishState() unconditionally after dispatch,
+        // so don't double-publish here. Matches the convention used by every
+        // other process* sub-method in this file.
+        for (id, var session) in sessions where session.host == host {
+            session.connectionState = state
+            sessions[id] = session
+        }
     }
 
     private func processToolTracking(event: HookEvent, session: inout SessionState) {
@@ -962,6 +983,13 @@ actor SessionStore {
     // MARK: - History Loading
 
     private func loadHistoryFromFile(sessionId: String, cwd: String) async {
+        // Remote sessions have no JSONL on disk — bail early so we don't
+        // emit empty historyLoaded events that thrash the UI's loading
+        // spinner. ChatView's empty state surfaces the limitation.
+        if let session = sessions[sessionId], session.host != .local {
+            return
+        }
+
         // Parse file asynchronously
         let messages = await ConversationParser.shared.parseFullConversation(
             sessionId: sessionId,
@@ -1119,7 +1147,10 @@ actor SessionStore {
                 continue
             }
 
-            if let pid = session.pid {
+            // Pid liveness check is local-only. Remote sessions carry the
+            // remote machine's pid, which is meaningless on this Mac — a
+            // local kill(pid, 0) would silently cull live remote sessions.
+            if session.host == .local, let pid = session.pid {
                 let isRunning = isProcessRunning(pid: pid)
                 if !isRunning {
                     Self.logger.info("Process \(pid) no longer running, ending session \(sessionId.prefix(8))")
@@ -1134,6 +1165,10 @@ actor SessionStore {
             // phase without any hook activity for too long, force it back to
             // idle. The next real hook event (Stop, PreToolUse, etc.) will
             // take it from there.
+            // Skip remote sessions whose bridge is mid-reconnect — the
+            // hook silence is the network's fault, not Claude's, so demoting
+            // .processing → .idle would be a false signal.
+            if case .reconnecting = session.connectionState { continue }
             let isActive = session.phase == .processing || session.phase == .compacting
             let stale = now.timeIntervalSince(session.lastActivity) > Self.staleActivePhaseThreshold
             if isActive, stale, session.phase.canTransition(to: .idle) {
@@ -1145,15 +1180,19 @@ actor SessionStore {
                 phaseChanged = true
             }
 
-            let needsSync: Bool
-            switch session.phase {
-            case .processing, .waitingForApproval:
-                needsSync = true
-            default:
-                needsSync = false
-            }
-            if needsSync {
-                scheduleFileSync(sessionId: sessionId, cwd: session.cwd)
+            // Same local-only gate as processHookEvent — remote sessions
+            // have no Mac-side JSONL to sync.
+            if session.host == .local {
+                let needsSync: Bool
+                switch session.phase {
+                case .processing, .waitingForApproval:
+                    needsSync = true
+                default:
+                    needsSync = false
+                }
+                if needsSync {
+                    scheduleFileSync(sessionId: sessionId, cwd: session.cwd)
+                }
             }
         }
 
@@ -1170,7 +1209,10 @@ actor SessionStore {
     // MARK: - State Publishing
 
     private func publishState() {
-        let sortedSessions = Array(sessions.values).sorted { $0.projectName < $1.projectName }
+        // Sort by displayProjectName so remote sessions group under their
+        // host-prefixed name in the UI list rather than mixing in by raw
+        // basename.
+        let sortedSessions = Array(sessions.values).sorted { $0.displayProjectName < $1.displayProjectName }
         sessionsSubject.send(sortedSessions)
     }
 

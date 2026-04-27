@@ -145,6 +145,25 @@ struct InstanceRow: View {
         return toolName == "AskUserQuestion"
     }
 
+    /// True when the bridge to a remote session is mid-reconnect.
+    private var isReconnecting: Bool {
+        if case .reconnecting = session.connectionState { return true }
+        return false
+    }
+
+    /// Tooltip text that explains the bridge state for remote sessions.
+    /// Empty for local sessions and connected remotes.
+    private var connectionStateHelpText: String {
+        switch session.connectionState {
+        case .reconnecting(let attempt):
+            return "Reconnecting (attempt \(attempt))…"
+        case .failed(let reason):
+            return "Bridge failed: \(reason)"
+        case .connected, .none:
+            return ""
+        }
+    }
+
     /// Status text based on session phase (fallback when no other content)
     private var phaseStatusText: String {
         switch session.phase {
@@ -176,6 +195,11 @@ struct InstanceRow: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.white)
                         .lineLimit(1)
+
+                    // Tags (SSH host, future: tmux/yabai/etc.)
+                    ForEach(session.tags, id: \.self) { tag in
+                        SessionTagBadge(tag: tag)
+                    }
 
                     // Token usage indicator
                     if session.usage.totalTokens > 0 {
@@ -319,6 +343,11 @@ struct InstanceRow: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(isHovered ? Color.white.opacity(0.06) : Color.clear)
         )
+        // Bridge connectivity overlay (only meaningful for remote sessions).
+        // Reconnecting/failed states fade the row and surface the reason
+        // on hover. Local sessions always have connectionState == nil.
+        .opacity(isReconnecting ? 0.5 : 1.0)
+        .help(connectionStateHelpText)
         .onHover { isHovered = $0 }
         .task {
             isYabaiAvailable = await WindowFinder.shared.isYabaiAvailable()

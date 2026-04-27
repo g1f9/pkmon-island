@@ -98,7 +98,7 @@ struct PendingPermission: Sendable {
 }
 
 /// Callback for hook events
-typealias HookEventHandler = @Sendable (HookEvent) -> Void
+typealias HookEventHandler = @Sendable (HookEvent, SessionHost) -> Void
 
 /// Callback for permission response failures (socket died)
 typealias PermissionFailureHandler = @Sendable (_ sessionId: String, _ toolUseId: String) -> Void
@@ -106,8 +106,13 @@ typealias PermissionFailureHandler = @Sendable (_ sessionId: String, _ toolUseId
 /// Unix domain socket server that receives events from Claude Code hooks
 /// Uses GCD DispatchSource for non-blocking I/O
 class HookSocketServer {
-    static let shared = HookSocketServer()
-    static let socketPath = "/tmp/claude-island.sock"
+    /// Path to the listening Unix domain socket (instance-scoped).
+    let socketPath: String
+
+    /// Host tag stamped onto every event accepted on this server before
+    /// it reaches SessionStore. Local server: `.local`. Per-remote server:
+    /// `.remote(name:)`.
+    let host: SessionHost
 
     private var serverSocket: Int32 = -1
     private var acceptSource: DispatchSourceRead?
@@ -125,7 +130,10 @@ class HookSocketServer {
     private var toolUseIdCache: [String: [String]] = [:]
     private let cacheLock = NSLock()
 
-    private init() {}
+    init(socketPath: String, host: SessionHost) {
+        self.socketPath = socketPath
+        self.host = host
+    }
 
     /// Start the socket server
     func start(onEvent: @escaping HookEventHandler, onPermissionFailure: PermissionFailureHandler? = nil) {
@@ -140,7 +148,7 @@ class HookSocketServer {
         eventHandler = onEvent
         permissionFailureHandler = onPermissionFailure
 
-        unlink(Self.socketPath)
+        unlink(socketPath)
 
         serverSocket = socket(AF_UNIX, SOCK_STREAM, 0)
         guard serverSocket >= 0 else {
@@ -153,7 +161,7 @@ class HookSocketServer {
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
-        Self.socketPath.withCString { ptr in
+        socketPath.withCString { ptr in
             withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
                 let pathBufferPtr = UnsafeMutableRawPointer(pathPtr)
                     .assumingMemoryBound(to: CChar.self)
@@ -174,7 +182,7 @@ class HookSocketServer {
             return
         }
 
-        chmod(Self.socketPath, 0o600)
+        chmod(socketPath, 0o600)
 
         guard listen(serverSocket, 10) == 0 else {
             logger.error("Failed to listen: \(errno)")
@@ -183,7 +191,7 @@ class HookSocketServer {
             return
         }
 
-        logger.info("Listening on \(Self.socketPath, privacy: .public)")
+        logger.info("Listening on \(self.socketPath, privacy: .public)")
 
         acceptSource = DispatchSource.makeReadSource(fileDescriptor: serverSocket, queue: queue)
         acceptSource?.setEventHandler { [weak self] in
@@ -202,7 +210,7 @@ class HookSocketServer {
     func stop() {
         acceptSource?.cancel()
         acceptSource = nil
-        unlink(Self.socketPath)
+        unlink(socketPath)
 
         permissionsLock.lock()
         for (_, pending) in pendingPermissions {
@@ -430,7 +438,7 @@ class HookSocketServer {
             } else {
                 logger.warning("Permission request missing tool_use_id for \(event.sessionId.prefix(8), privacy: .public) - no cache hit")
                 close(clientSocket)
-                eventHandler?(event)
+                eventHandler?(event, host)
                 return
             }
 
@@ -461,13 +469,13 @@ class HookSocketServer {
             pendingPermissions[toolUseId] = pending
             permissionsLock.unlock()
 
-            eventHandler?(updatedEvent)
+            eventHandler?(updatedEvent, host)
             return
         } else {
             close(clientSocket)
         }
 
-        eventHandler?(event)
+        eventHandler?(event, host)
     }
 
     private func sendPermissionResponse(toolUseId: String, decision: String, reason: String?) {

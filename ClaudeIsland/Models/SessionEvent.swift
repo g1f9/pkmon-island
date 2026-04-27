@@ -14,7 +14,12 @@ enum SessionEvent: Sendable {
     // MARK: - Hook Events (from HookSocketServer)
 
     /// A hook event was received from Claude Code
-    case hookReceived(HookEvent)
+    case hookReceived(HookEvent, host: SessionHost)
+
+    // MARK: - Bridge Events
+
+    /// SSH bridge connection state changed for a remote host
+    case bridgeStateChanged(host: SessionHost, state: RemoteConnectionState?)
 
     // MARK: - Permission Events (user actions)
 
@@ -183,8 +188,8 @@ extension HookEvent {
 extension SessionEvent: CustomStringConvertible {
     nonisolated var description: String {
         switch self {
-        case .hookReceived(let event):
-            return "hookReceived(\(event.event), session: \(event.sessionId.prefix(8)))"
+        case .hookReceived(let event, let host):
+            return "hookReceived(\(event.event), session: \(event.sessionId.prefix(8)), host: \(host.displayName))"
         case .permissionApproved(let sessionId, let toolUseId):
             return "permissionApproved(session: \(sessionId.prefix(8)), tool: \(toolUseId.prefix(12)))"
         case .permissionDenied(let sessionId, let toolUseId, _):
@@ -215,6 +220,8 @@ extension SessionEvent: CustomStringConvertible {
             return "subagentStopped(session: \(sessionId.prefix(8)), task: \(taskToolId.prefix(12)))"
         case .agentFileUpdated(let sessionId, let taskToolId, let tools):
             return "agentFileUpdated(session: \(sessionId.prefix(8)), task: \(taskToolId.prefix(12)), tools: \(tools.count))"
+        case .bridgeStateChanged(let host, let state):
+            return "bridgeStateChanged(host: \(host.displayName), state: \(state.map { String(describing: $0) } ?? "nil"))"
         }
     }
 }

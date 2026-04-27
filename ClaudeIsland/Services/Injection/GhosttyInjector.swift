@@ -43,7 +43,11 @@ struct GhosttyInjector: MessageInjector {
 
     func canInject(into session: SessionState) async -> Bool {
         let prefix = session.sessionId.prefix(8)
-        guard !session.cwd.isEmpty else {
+        // Cwd is only used by the local cwd-fallback path. Remote
+        // sessions resolve via GhosttySurfaceMatcher (ssh-child probe)
+        // and never look at session.cwd, so an empty cwd on a remote
+        // session must NOT short-circuit injection.
+        if session.host == .local, session.cwd.isEmpty {
             injectLogger.info("ghostty canInject \(prefix, privacy: .public): empty cwd")
             return false
         }
@@ -53,6 +57,41 @@ struct GhosttyInjector: MessageInjector {
         }
 
         return await MainActor.run {
+            // Remote session: surface lookup goes through
+            // GhosttySurfaceMatcher (ssh-child detection per ps -t).
+            // The Ghostty surface that owns the user's interactive
+            // ssh tab to this host is the same surface where claude
+            // is running on the remote pty — bytes injected there
+            // get forwarded back over the user's interactive SSH.
+            if case .remote(let hostName) = session.host {
+                guard let host = RemoteHostRegistry.shared.hosts.first(where: { $0.name == hostName }) else {
+                    injectLogger.info("ghostty canInject \(prefix, privacy: .public): remote host \(hostName, privacy: .public) not in registry")
+                    return false
+                }
+                guard let tty = GhosttySurfaceMatcher.matchingTty(for: session, host: host) else {
+                    injectLogger.info("ghostty canInject \(prefix, privacy: .public): no Ghostty surface owns ssh-to-\(hostName, privacy: .public)")
+                    return false
+                }
+                let ttyPath = "/dev/\(tty)"
+                do {
+                    let matched = try probeByTty(ttyPath)
+                    injectLogger.info(
+                        "ghostty canInject \(prefix, privacy: .public): remote=\(hostName, privacy: .public) tty=\(ttyPath, privacy: .public) match=\(matched, privacy: .public)"
+                    )
+                    return matched
+                } catch AppleScriptError.permissionDenied {
+                    injectLogger.error(
+                        "ghostty canInject \(prefix, privacy: .public): TCC permission denied — grant in System Settings → Privacy & Security → Automation"
+                    )
+                    return false
+                } catch {
+                    injectLogger.error(
+                        "ghostty canInject \(prefix, privacy: .public): remote probe error \(error.localizedDescription, privacy: .public)"
+                    )
+                    return false
+                }
+            }
+
             GhosttyTtyCapability.probeIfNeeded(bundleId: ghosttyBundleId)
             do {
                 if GhosttyTtyCapability.isSupported, let ttyPath = Self.ttyPath(for: session) {
@@ -86,7 +125,7 @@ struct GhosttyInjector: MessageInjector {
     func inject(_ text: String, into session: SessionState) async -> Bool {
         let escapedText = AppleScriptRunner.escape(text)
 
-        // Submit semantics — applies to both selection paths:
+        // Submit semantics — applies to all selection paths:
         //   1. Paste via bracketed paste (Cmd+V code path — `/`, `!`, `#`,
         //      embedded newlines all stay literal).
         //   2. Fire `send key "enter"` TWICE. A single synthetic Enter only
@@ -96,9 +135,33 @@ struct GhosttyInjector: MessageInjector {
         //   Enter submit, but intercepts Enter before macOS IME (Ghostty
         //   Discussion #9264). System Events + activate works but yanks
         //   Ghostty to the front, dismissing the Vibe Notch panel.
+
+        // Resolve the Ghostty surface tty. Remote sessions go through
+        // GhosttySurfaceMatcher; local sessions use the existing tty/
+        // cwd paths.
         let script: String
         let pathName: String
-        if GhosttyTtyCapability.isSupported, let ttyPath = Self.ttyPath(for: session) {
+        if case .remote(let hostName) = session.host {
+            // Two MainActor hops per remote inject: this one to resolve
+            // the tty (RemoteHostRegistry and GhosttySurfaceMatcher are
+            // both @MainActor) and another below for the AppleScript run
+            // itself. The hops are necessary — both pieces are
+            // main-actor-bound — and the cost is negligible compared to
+            // the AppleScript round-trip. Don't try to merge them.
+            let resolved: String? = await MainActor.run {
+                guard let host = RemoteHostRegistry.shared.hosts.first(where: { $0.name == hostName }),
+                      let tty = GhosttySurfaceMatcher.matchingTty(for: session, host: host) else {
+                    return nil
+                }
+                return "/dev/\(tty)"
+            }
+            guard let ttyPath = resolved else {
+                injectLogger.warning("ghostty inject \(session.sessionId.prefix(8), privacy: .public): no remote tty match for \(hostName, privacy: .public)")
+                return false
+            }
+            script = injectScriptByTty(ttyPath: ttyPath, escapedText: escapedText)
+            pathName = "remote-tty"
+        } else if GhosttyTtyCapability.isSupported, let ttyPath = Self.ttyPath(for: session) {
             script = injectScriptByTty(ttyPath: ttyPath, escapedText: escapedText)
             pathName = "tty"
         } else {
