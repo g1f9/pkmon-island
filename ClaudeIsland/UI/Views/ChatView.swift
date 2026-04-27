@@ -273,26 +273,12 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: session.host.isRemote
-                  ? "antenna.radiowaves.left.and.right"
-                  : "bubble.left.and.bubble.right")
+            Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 24))
                 .foregroundColor(.white.opacity(0.2))
-            if session.host.isRemote {
-                Text("Remote session — chat history not available")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.4))
-                    .multilineTextAlignment(.center)
-                Text("Type below to send a message; approvals and status still flow.")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.3))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-            } else {
-                Text("No messages yet")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.4))
-            }
+            Text("No messages yet")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.white.opacity(0.4))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

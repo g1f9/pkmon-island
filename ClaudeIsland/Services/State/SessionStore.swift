@@ -132,6 +132,21 @@ actor SessionStore {
         // Track new session in Mixpanel
         if isNewSession {
             Mixpanel.mainInstance().track(event: "Session Started")
+            // Kick off the per-session JSONL mirror so ConversationParser
+            // sees the same `<projects>/<encoded-cwd>/<sessionId>.jsonl`
+            // shape it sees for local sessions. Idempotent on the registry
+            // side, so a duplicate ensure() from a hook event late in the
+            // session (post-restart) is harmless.
+            if case .remote(let name) = host {
+                let cwd = event.cwd
+                Task { @MainActor in
+                    RemoteJSONLMirrorRegistry.shared.ensure(
+                        hostName: name,
+                        cwd: cwd,
+                        sessionId: sessionId
+                    )
+                }
+            }
         }
 
         session.pid = event.pid
@@ -147,6 +162,7 @@ actor SessionStore {
         if event.status == "ended" {
             sessions.removeValue(forKey: sessionId)
             cancelPendingSync(sessionId: sessionId)
+            stopMirrorIfRemote(host: session.host, sessionId: sessionId)
             return
         }
 
@@ -202,13 +218,23 @@ actor SessionStore {
         sessions[sessionId] = session
         publishState()
 
-        // JSONL on disk only exists for local sessions. Remote sessions
-        // would scheduleFileSync against the remote cwd path (which has
-        // no Mac-side file), so skip — chat history for remote sessions
-        // is reconstructed from the hook event stream alone (per spec
-        // § 数据流 · 不做的：JSONL 远端访问).
-        if session.host == .local, event.shouldSyncFile {
-            scheduleFileSync(sessionId: sessionId, cwd: event.cwd)
+        // For remote sessions, ConversationParser reads from a local mirror
+        // file maintained by RemoteJSONLMirrorRegistry — same code path as
+        // local. Originally deferred per
+        // `docs/superpowers/specs/2026-04-26-ssh-remote-state-design.md`
+        // § 不做的：JSONL 远端访问; the v2 mirror lifts that limitation.
+        if event.shouldSyncFile {
+            scheduleFileSync(sessionId: sessionId, cwd: event.cwd, host: session.host)
+        }
+    }
+
+    /// Stop the JSONL mirror for a session if it's a remote session.
+    /// Hops to MainActor because RemoteJSONLMirrorRegistry is main-actor-bound.
+    private nonisolated func stopMirrorIfRemote(host: SessionHost, sessionId: String) {
+        if case .remote(let name) = host {
+            Task { @MainActor in
+                RemoteJSONLMirrorRegistry.shared.stop(hostName: name, sessionId: sessionId)
+            }
         }
     }
 
@@ -607,7 +633,8 @@ actor SessionStore {
         // Update conversationInfo from JSONL (summary, lastMessage, etc.)
         let conversationInfo = await ConversationParser.shared.parse(
             sessionId: payload.sessionId,
-            cwd: session.cwd
+            cwd: session.cwd,
+            host: session.host
         )
         session.conversationInfo = conversationInfo
 
@@ -735,6 +762,7 @@ actor SessionStore {
             sessionId: payload.sessionId,
             session: &session,
             cwd: payload.cwd,
+            host: session.host,
             structuredResults: payload.structuredResults
         )
 
@@ -754,6 +782,7 @@ actor SessionStore {
         sessionId: String,
         session: inout SessionState,
         cwd: String,
+        host: SessionHost,
         structuredResults: [String: ToolResultData]
     ) async {
         for i in 0..<session.chatItems.count {
@@ -775,7 +804,8 @@ actor SessionStore {
             let subagentToolInfos = await ConversationParser.shared.parseSubagentTools(
                 sessionId: sessionId,
                 agentId: taskResult.agentId,
-                cwd: cwd
+                cwd: cwd,
+                host: host
             )
 
             guard !subagentToolInfos.isEmpty else { continue }
@@ -976,24 +1006,25 @@ actor SessionStore {
     // MARK: - Session End Processing
 
     private func processSessionEnd(sessionId: String) async {
+        let host = sessions[sessionId]?.host
         sessions.removeValue(forKey: sessionId)
         cancelPendingSync(sessionId: sessionId)
+        if let host { stopMirrorIfRemote(host: host, sessionId: sessionId) }
     }
 
     // MARK: - History Loading
 
     private func loadHistoryFromFile(sessionId: String, cwd: String) async {
-        // Remote sessions have no JSONL on disk — bail early so we don't
-        // emit empty historyLoaded events that thrash the UI's loading
-        // spinner. ChatView's empty state surfaces the limitation.
-        if let session = sessions[sessionId], session.host != .local {
-            return
-        }
+        // Resolve the host so ConversationParser knows which projects root
+        // (local `~/.claude/projects` vs the per-host mirror) to read from.
+        // Default to .local for sessions we haven't ingested yet.
+        let host = sessions[sessionId]?.host ?? .local
 
         // Parse file asynchronously
         let messages = await ConversationParser.shared.parseFullConversation(
             sessionId: sessionId,
-            cwd: cwd
+            cwd: cwd,
+            host: host
         )
         let completedTools = await ConversationParser.shared.completedToolIds(for: sessionId)
         let toolResults = await ConversationParser.shared.toolResults(for: sessionId)
@@ -1002,7 +1033,8 @@ actor SessionStore {
         // Also parse conversationInfo (summary, lastMessage, etc.)
         let conversationInfo = await ConversationParser.shared.parse(
             sessionId: sessionId,
-            cwd: cwd
+            cwd: cwd,
+            host: host
         )
 
         // Process loaded history
@@ -1059,7 +1091,7 @@ actor SessionStore {
 
     // MARK: - File Sync Scheduling
 
-    private func scheduleFileSync(sessionId: String, cwd: String) {
+    private func scheduleFileSync(sessionId: String, cwd: String, host: SessionHost) {
         // Cancel existing sync
         cancelPendingSync(sessionId: sessionId)
 
@@ -1071,7 +1103,8 @@ actor SessionStore {
             // Parse incrementally - only get NEW messages since last call
             let result = await ConversationParser.shared.parseIncremental(
                 sessionId: sessionId,
-                cwd: cwd
+                cwd: cwd,
+                host: host
             )
 
             if result.clearDetected {
@@ -1143,6 +1176,7 @@ actor SessionStore {
             if session.phase == .ended {
                 sessions.removeValue(forKey: sessionId)
                 cancelPendingSync(sessionId: sessionId)
+                stopMirrorIfRemote(host: session.host, sessionId: sessionId)
                 removedSession = true
                 continue
             }
@@ -1180,19 +1214,17 @@ actor SessionStore {
                 phaseChanged = true
             }
 
-            // Same local-only gate as processHookEvent — remote sessions
-            // have no Mac-side JSONL to sync.
-            if session.host == .local {
-                let needsSync: Bool
-                switch session.phase {
-                case .processing, .waitingForApproval:
-                    needsSync = true
-                default:
-                    needsSync = false
-                }
-                if needsSync {
-                    scheduleFileSync(sessionId: sessionId, cwd: session.cwd)
-                }
+            // Remote sessions go through the same sync path now — the
+            // mirror keeps a local file in sync with the remote JSONL.
+            let needsSync: Bool
+            switch session.phase {
+            case .processing, .waitingForApproval:
+                needsSync = true
+            default:
+                needsSync = false
+            }
+            if needsSync {
+                scheduleFileSync(sessionId: sessionId, cwd: session.cwd, host: session.host)
             }
         }
 

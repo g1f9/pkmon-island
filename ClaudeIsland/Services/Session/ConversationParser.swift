@@ -102,9 +102,8 @@ actor ConversationParser {
 
     /// Parse a JSONL file to extract conversation info
     /// Uses caching based on file modification time
-    func parse(sessionId: String, cwd: String) -> ConversationInfo {
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        let sessionFile = ClaudePaths.projectsDir.path + "/" + projectDir + "/" + sessionId + ".jsonl"
+    func parse(sessionId: String, cwd: String, host: SessionHost = .local) -> ConversationInfo {
+        let sessionFile = Self.sessionFilePath(sessionId: sessionId, cwd: cwd, host: host)
 
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: sessionFile),
@@ -312,8 +311,8 @@ actor ConversationParser {
     // MARK: - Full Conversation Parsing
 
     /// Parse full conversation history for chat view (returns ALL messages - use sparingly)
-    func parseFullConversation(sessionId: String, cwd: String) -> [ChatMessage] {
-        let sessionFile = Self.sessionFilePath(sessionId: sessionId, cwd: cwd)
+    func parseFullConversation(sessionId: String, cwd: String, host: SessionHost = .local) -> [ChatMessage] {
+        let sessionFile = Self.sessionFilePath(sessionId: sessionId, cwd: cwd, host: host)
 
         guard FileManager.default.fileExists(atPath: sessionFile) else {
             return []
@@ -337,8 +336,8 @@ actor ConversationParser {
     }
 
     /// Parse only NEW messages since last call (efficient incremental updates)
-    func parseIncremental(sessionId: String, cwd: String) -> IncrementalParseResult {
-        let sessionFile = Self.sessionFilePath(sessionId: sessionId, cwd: cwd)
+    func parseIncremental(sessionId: String, cwd: String, host: SessionHost = .local) -> IncrementalParseResult {
+        let sessionFile = Self.sessionFilePath(sessionId: sessionId, cwd: cwd, host: host)
 
         guard FileManager.default.fileExists(atPath: sessionFile) else {
             return IncrementalParseResult(
@@ -507,10 +506,27 @@ actor ConversationParser {
         return true
     }
 
+    /// Projects root for a session host. Local uses `~/.claude/projects`;
+    /// remote uses the per-host mirror under `~/Library/Caches`.
+    nonisolated static func projectsRoot(for host: SessionHost) -> String {
+        switch host {
+        case .local:
+            return ClaudePaths.projectsDir.path
+        case .remote(let name):
+            return ClaudePaths.remoteMirrorProjectsDir(forHost: name).path
+        }
+    }
+
+    /// Encode a cwd into Claude Code's project-dir form
+    /// (e.g. `/Users/foo/proj` → `-Users-foo-proj`).
+    nonisolated static func encodedProjectDir(forCwd cwd: String) -> String {
+        cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
+    }
+
     /// Build session file path
-    private static func sessionFilePath(sessionId: String, cwd: String) -> String {
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        return ClaudePaths.projectsDir.path + "/" + projectDir + "/" + sessionId + ".jsonl"
+    private static func sessionFilePath(sessionId: String, cwd: String, host: SessionHost) -> String {
+        let projectDir = Self.encodedProjectDir(forCwd: cwd)
+        return Self.projectsRoot(for: host) + "/" + projectDir + "/" + sessionId + ".jsonl"
     }
 
     /// Build subagent JSONL file path.
@@ -524,8 +540,8 @@ actor ConversationParser {
     /// Prefer the nested path; fall back to the flat path if only it exists
     /// (cross-version compatibility). If neither exists yet (file still being
     /// created) we return the nested path as the modern default.
-    nonisolated static func subagentFilePath(sessionId: String, agentId: String, projectDir: String) -> String {
-        let base = ClaudePaths.projectsDir.path + "/" + projectDir
+    nonisolated static func subagentFilePath(sessionId: String, agentId: String, projectDir: String, host: SessionHost = .local) -> String {
+        let base = Self.projectsRoot(for: host) + "/" + projectDir
         let nested = base + "/" + sessionId + "/subagents/agent-" + agentId + ".jsonl"
         let flat = base + "/agent-" + agentId + ".jsonl"
 
@@ -961,11 +977,11 @@ actor ConversationParser {
     // MARK: - Subagent Tools Parsing
 
     /// Parse subagent tools from an agent JSONL file
-    func parseSubagentTools(sessionId: String, agentId: String, cwd: String) -> [SubagentToolInfo] {
+    func parseSubagentTools(sessionId: String, agentId: String, cwd: String, host: SessionHost = .local) -> [SubagentToolInfo] {
         guard !agentId.isEmpty else { return [] }
 
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        let agentFile = Self.subagentFilePath(sessionId: sessionId, agentId: agentId, projectDir: projectDir)
+        let projectDir = Self.encodedProjectDir(forCwd: cwd)
+        let agentFile = Self.subagentFilePath(sessionId: sessionId, agentId: agentId, projectDir: projectDir, host: host)
 
         guard FileManager.default.fileExists(atPath: agentFile),
               let content = try? String(contentsOfFile: agentFile, encoding: .utf8) else {
@@ -1053,11 +1069,11 @@ struct SubagentToolInfo: Sendable {
 
 extension ConversationParser {
     /// Parse subagent tools from an agent JSONL file (static, synchronous version)
-    nonisolated static func parseSubagentToolsSync(sessionId: String, agentId: String, cwd: String) -> [SubagentToolInfo] {
+    nonisolated static func parseSubagentToolsSync(sessionId: String, agentId: String, cwd: String, host: SessionHost = .local) -> [SubagentToolInfo] {
         guard !agentId.isEmpty else { return [] }
 
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        let agentFile = subagentFilePath(sessionId: sessionId, agentId: agentId, projectDir: projectDir)
+        let projectDir = Self.encodedProjectDir(forCwd: cwd)
+        let agentFile = subagentFilePath(sessionId: sessionId, agentId: agentId, projectDir: projectDir, host: host)
 
         guard FileManager.default.fileExists(atPath: agentFile),
               let content = try? String(contentsOfFile: agentFile, encoding: .utf8) else {

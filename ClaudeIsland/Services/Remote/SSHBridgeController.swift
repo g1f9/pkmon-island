@@ -43,6 +43,11 @@ final class SSHBridgeController {
             Task { await bridge.stop() }
         }
         bridges.removeAll()
+        // Mirrors only matter while the bridge is up — kill them so we
+        // don't accumulate dead `ssh tail` processes through sleep.
+        // resumeAll() doesn't need to restart them; the next hook event
+        // for each session will re-trigger ensure() in SessionStore.
+        RemoteJSONLMirrorRegistry.shared.stopEverything()
     }
 
     func resumeAll() {
@@ -81,7 +86,11 @@ final class SSHBridgeController {
 
     private func stopBridge(hostId: UUID) {
         guard let bridge = bridges.removeValue(forKey: hostId) else { return }
-        Task { await bridge.stop() }
+        Task { @MainActor in
+            let hostName = await bridge.host.name
+            RemoteJSONLMirrorRegistry.shared.stopAll(hostName: hostName)
+            await bridge.stop()
+        }
     }
 
     private func handleStateChange(host: RemoteHost, state: SSHBridge.State) {

@@ -62,6 +62,22 @@ enum ClaudePaths {
         claudeDir.appendingPathComponent("projects")
     }
 
+    /// Per-host mirror root for remote JSONL files. Lives under
+    /// ~/Library/Caches so it's outside the user's actual ~/.claude tree —
+    /// putting remote sessions inside `claudeDir/projects` would make
+    /// Claude CLI itself try to scan them as local sessions.
+    /// The layout intentionally matches `projectsDir` so ConversationParser
+    /// can use the same `<projects>/<encoded-cwd>/<sessionId>.jsonl` shape.
+    static func remoteMirrorProjectsDir(forHost host: String) -> URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches")
+        return caches
+            .appendingPathComponent("com.claudeisland", isDirectory: true)
+            .appendingPathComponent("remote-mirror", isDirectory: true)
+            .appendingPathComponent(host, isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+    }
+
     /// Shell-safe absolute path for hook commands in settings.json.
     /// Absolute paths keep custom directories and ~/.config/claude working;
     /// quoting keeps paths with spaces from being split by the shell.
