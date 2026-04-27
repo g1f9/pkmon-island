@@ -91,7 +91,12 @@ class ClaudeSessionMonitor: ObservableObject {
                     await SessionStore.shared.process(.hookReceived(event, host: eventHost))
                 }
 
-                if event.sessionPhase == .processing {
+                // InterruptWatcherManager watches the LOCAL ~/.claude/projects/<cwd>/<sid>.jsonl
+                // file. Remote sessions have no such file on Mac; trying
+                // to attach a watcher fails noisily and gives nothing
+                // back. Spec § 数据流 explicitly defers JSONL access for
+                // remote to v2.
+                if eventHost == .local && event.sessionPhase == .processing {
                     Task { @MainActor in
                         InterruptWatcherManager.shared.startWatching(
                             sessionId: event.sessionId,
@@ -100,7 +105,7 @@ class ClaudeSessionMonitor: ObservableObject {
                     }
                 }
 
-                if event.status == "ended" {
+                if eventHost == .local && event.status == "ended" {
                     Task { @MainActor in
                         InterruptWatcherManager.shared.stopWatching(sessionId: event.sessionId)
                     }

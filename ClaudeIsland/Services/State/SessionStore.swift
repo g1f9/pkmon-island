@@ -202,7 +202,12 @@ actor SessionStore {
         sessions[sessionId] = session
         publishState()
 
-        if event.shouldSyncFile {
+        // JSONL on disk only exists for local sessions. Remote sessions
+        // would scheduleFileSync against the remote cwd path (which has
+        // no Mac-side file), so skip — chat history for remote sessions
+        // is reconstructed from the hook event stream alone (per spec
+        // § 数据流 · 不做的：JSONL 远端访问).
+        if session.host == .local, event.shouldSyncFile {
             scheduleFileSync(sessionId: sessionId, cwd: event.cwd)
         }
     }
@@ -978,6 +983,13 @@ actor SessionStore {
     // MARK: - History Loading
 
     private func loadHistoryFromFile(sessionId: String, cwd: String) async {
+        // Remote sessions have no JSONL on disk — bail early so we don't
+        // emit empty historyLoaded events that thrash the UI's loading
+        // spinner. ChatView's empty state surfaces the limitation.
+        if let session = sessions[sessionId], session.host != .local {
+            return
+        }
+
         // Parse file asynchronously
         let messages = await ConversationParser.shared.parseFullConversation(
             sessionId: sessionId,
@@ -1168,15 +1180,19 @@ actor SessionStore {
                 phaseChanged = true
             }
 
-            let needsSync: Bool
-            switch session.phase {
-            case .processing, .waitingForApproval:
-                needsSync = true
-            default:
-                needsSync = false
-            }
-            if needsSync {
-                scheduleFileSync(sessionId: sessionId, cwd: session.cwd)
+            // Same local-only gate as processHookEvent — remote sessions
+            // have no Mac-side JSONL to sync.
+            if session.host == .local {
+                let needsSync: Bool
+                switch session.phase {
+                case .processing, .waitingForApproval:
+                    needsSync = true
+                default:
+                    needsSync = false
+                }
+                if needsSync {
+                    scheduleFileSync(sessionId: sessionId, cwd: session.cwd)
+                }
             }
         }
 
