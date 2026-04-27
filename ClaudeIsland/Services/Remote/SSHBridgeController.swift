@@ -32,6 +32,13 @@ final class SSHBridgeController {
         guard !started else { return }
         started = true
 
+        // Reap orphans BEFORE binding new bridges. A leftover -N -R from
+        // a previous Vibe Notch run holds the remote /tmp/claude-island.sock
+        // open, which makes the new bridge's bind fail with "remote port
+        // forwarding failed" until StreamLocalBindUnlink eventually
+        // recovers — and the leftover tail processes leak ssh connections.
+        OrphanedSSHReaper.sweep()
+
         observeWorkspaceNotifications()
         observeRegistry()
         startEnabledBridges()
