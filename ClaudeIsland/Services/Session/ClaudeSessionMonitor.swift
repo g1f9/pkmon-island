@@ -164,12 +164,14 @@ class ClaudeSessionMonitor: ObservableObject {
                 return
             }
 
-            for server in servers.values {
-                server.respondToPermission(
-                    toolUseId: permission.toolUseId,
-                    decision: "allow"
-                )
-            }
+            // Route to the owning server only. The session carries its
+            // host, and each HookSocketServer's pendingPermissions cache
+            // is server-local — broadcasting to all servers would just
+            // be N-1 silent no-ops plus N-1 noisy debug log lines.
+            servers[session.host]?.respondToPermission(
+                toolUseId: permission.toolUseId,
+                decision: "allow"
+            )
 
             await SessionStore.shared.process(
                 .permissionApproved(sessionId: sessionId, toolUseId: permission.toolUseId)
@@ -184,13 +186,11 @@ class ClaudeSessionMonitor: ObservableObject {
                 return
             }
 
-            for server in servers.values {
-                server.respondToPermission(
-                    toolUseId: permission.toolUseId,
-                    decision: "deny",
-                    reason: reason
-                )
-            }
+            servers[session.host]?.respondToPermission(
+                toolUseId: permission.toolUseId,
+                decision: "deny",
+                reason: reason
+            )
 
             await SessionStore.shared.process(
                 .permissionDenied(sessionId: sessionId, toolUseId: permission.toolUseId, reason: reason)

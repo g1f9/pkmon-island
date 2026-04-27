@@ -146,9 +146,12 @@ struct SessionState: Equatable, Identifiable, Sendable {
         return sessionId
     }
 
-    /// Display title: summary > first user message > project name
+    /// Display title: summary > first user message > host-prefixed project name.
+    /// Remote sessions never get summary/firstUserMessage (no JSONL on Mac),
+    /// so the host-prefixed fallback is what disambiguates two same-named
+    /// project rows (one local, one remote).
     var displayTitle: String {
-        conversationInfo.summary ?? conversationInfo.firstUserMessage ?? projectName
+        conversationInfo.summary ?? conversationInfo.firstUserMessage ?? displayProjectName
     }
 
     /// Project name as shown in the session list. Remote sessions are
