@@ -196,6 +196,11 @@ struct InstanceRow: View {
                         .foregroundColor(.white)
                         .lineLimit(1)
 
+                    // Tags (SSH host, future: tmux/yabai/etc.)
+                    ForEach(session.tags, id: \.self) { tag in
+                        SessionTagBadge(tag: tag)
+                    }
+
                     // Token usage indicator
                     if session.usage.totalTokens > 0 {
                         Text(session.usage.formattedTotal)
