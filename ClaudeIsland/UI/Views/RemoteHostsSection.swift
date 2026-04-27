@@ -15,6 +15,10 @@ struct RemoteHostsSection: View {
     @State private var newName: String = ""
     @State private var newSSHTarget: String = ""
     @State private var inProgress = false
+    /// Set to the host id while uninstall is mid-flight, so the row can
+    /// show a per-row spinner instead of leaving the user wondering
+    /// whether the click registered.
+    @State private var removingHostId: UUID?
     @State private var lastError: String?
 
     var body: some View {
@@ -52,6 +56,7 @@ struct RemoteHostsSection: View {
 
     @ViewBuilder
     private func hostRow(_ host: RemoteHost) -> some View {
+        let isRemoving = removingHostId == host.id
         HStack(spacing: 8) {
             // Name (and sshTarget below it, only when they differ — when
             // name was left blank during install we use sshTarget as the
@@ -72,22 +77,35 @@ struct RemoteHostsSection: View {
             // Take all available width so long names truncate instead of
             // pushing the controls off-row.
             .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(isRemoving ? 0.5 : 1.0)
 
-            Toggle("", isOn: Binding(
-                get: { host.enabled },
-                set: { newValue in
-                    var updated = host
-                    updated.enabled = newValue
-                    registry.update(updated)
+            if isRemoving {
+                // Mid-uninstall: show progress in place of the row's
+                // controls. The whole flow is 3 sequential SSH commands
+                // (read settings → write stripped settings → rm hook
+                // script) so 3-6s on a typical link.
+                ProgressView()
+                    .controlSize(.small)
+                Text("Removing…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Toggle("", isOn: Binding(
+                    get: { host.enabled },
+                    set: { newValue in
+                        var updated = host
+                        updated.enabled = newValue
+                        registry.update(updated)
+                    }
+                ))
+                .labelsHidden()
+                .disabled(inProgress)
+
+                Button("Remove") {
+                    Task { await uninstallAndRemove(host) }
                 }
-            ))
-            .labelsHidden()
-            .disabled(inProgress)
-
-            Button("Remove") {
-                Task { await uninstallAndRemove(host) }
+                .disabled(inProgress)
             }
-            .disabled(inProgress)
         }
     }
 
@@ -147,9 +165,17 @@ struct RemoteHostsSection: View {
     }
 
     private func uninstallAndRemove(_ host: RemoteHost) async {
+        // inProgress disables the global Add/Toggle/Remove controls so
+        // the user can't kick off concurrent SSH ops.
+        // removingHostId additionally lights up THIS row's spinner so
+        // the user can see which host is being torn down.
         inProgress = true
+        removingHostId = host.id
         lastError = nil
-        defer { inProgress = false }
+        defer {
+            inProgress = false
+            removingHostId = nil
+        }
         do {
             try await RemoteHookInstaller.uninstall(on: host)
         } catch {
